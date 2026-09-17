@@ -13,7 +13,8 @@ The project is framework-neutral: it does not require Spring, a broker, Flyway, 
 - **Timeout** steps and waits, then emit an event or transition to another node.
 - **Branch** using declarative variable comparisons or registered predicates.
 - **Gateway** through exclusive or supported multi-route decisions.
-- **Fork** work into parallel branches and **join** after the required branches complete.
+- **Fork** work into parallel branches.
+- **Join** after the required parallel branches complete.
 - **Loop** through a bounded sequence while a declarative condition remains true.
 - **Run a sub-workflow** with explicit version and input mappings.
 - **Transition** on success or failure and optionally emit an event.
