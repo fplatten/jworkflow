@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="001-create-jworkflow-schema" author="org.jworkflow">
+        <sqlFile path="db/migration/V1__create_jworkflow_schema.sql"
+                 relativeToChangelogFile="false"
+                 splitStatements="true"
+                 stripComments="true"/>
+    </changeSet>
+    <changeSet id="002-durable-workflow-and-messaging" author="org.jworkflow">
+        <sqlFile path="db/migration/V2__durable_workflow_and_messaging.sql"
+                 relativeToChangelogFile="false"
+                 splitStatements="true"
+                 stripComments="true"/>
+    </changeSet>
+    <changeSet id="003-timer-attempt-history" author="org.jworkflow">
+        <sqlFile path="db/migration/V3__timer_attempt_history.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
+    <changeSet id="004-event-routing-indexes" author="org.jworkflow">
+        <sqlFile path="db/migration/V4__event_routing_indexes.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
+    <changeSet id="005-message-redaction-status" author="org.jworkflow">
+        <sqlFile path="db/migration/V5__message_redaction_status.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
+</databaseChangeLog>
