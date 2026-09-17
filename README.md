@@ -277,15 +277,12 @@ jworkflow.sqlite.wal-enabled=false
 
 Advanced settings can be passed as `jworkflow.setting.<name>`. Prefer typed builder methods for polling intervals, claim leases, batch sizes, retry attempts, and backoff because they validate supported bounds.
 
-## Examples and documentation
+## Examples
 
 - [Order fulfillment example](jworkflow-example/src/main/java/org/jworkflow/example/OrderFulfillmentExample.java)
 - [Groovy order workflow](jworkflow-example/src/main/groovy/workflows/order-fulfillment.groovy)
 - [Parallel-order routing test](jworkflow-example/src/test/java/org/jworkflow/example/ParallelOrderRoutingExampleTest.java)
 - [Durable restart example](jworkflow-example/src/test/java/org/jworkflow/example/DurableOrderRestartExampleTest.java)
-- [Feature briefs](docs/features/README.md)
-- [MVP acceptance audit](docs/mvp-acceptance-audit.md)
-- [JDBC operations and migration notes](docs/jdbc-mvp-operations-and-migration.md)
 
 Run the order example after compiling the reactor:
 
