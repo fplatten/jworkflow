@@ -22,8 +22,6 @@ The project is framework-neutral: it does not require Spring, a broker, Flyway, 
 - Lifecycle observers, basic metrics/logging adapters, and trace-context propagation points.
 - Central event-capture policies for metadata filtering and payload redaction before persistence or publication.
 
-See [the MVP acceptance audit](docs/mvp-acceptance-audit.md) for the requirement-to-implementation and test mapping. Future work is tracked under [docs/backlog](docs/backlog/README.md).
-
 ## Modules
 
 | Module | Purpose |
