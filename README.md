@@ -4,6 +4,22 @@ jworkflow is a lightweight, embeddable Java 17 workflow engine for command-drive
 
 The project is framework-neutral: it does not require Spring, a broker, Flyway, or Liquibase at runtime.
 
+## Supported workflow actions
+
+- **Start** a workflow at a declared node or in response to a named event.
+- **Step** through application actions or registered listener invocations.
+- **Wait** for an external event, correlated to the correct workflow instance.
+- **Retry** failed steps with bounded attempts and backoff.
+- **Timeout** steps and waits, then emit an event or transition to another node.
+- **Branch** using declarative variable comparisons or registered predicates.
+- **Gateway** through exclusive or supported multi-route decisions.
+- **Fork** work into parallel branches and **join** after the required branches complete.
+- **Loop** through a bounded sequence while a declarative condition remains true.
+- **Run a sub-workflow** with explicit version and input mappings.
+- **Transition** on success or failure and optionally emit an event.
+- **Complete** at a named terminal state.
+- **Cancel, resume, or retry** a workflow through typed commands.
+
 ## Current MVP capabilities
 
 - Command API for starting, signaling, retrying, canceling, and resuming workflow instances.
