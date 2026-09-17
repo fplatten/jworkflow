@@ -170,6 +170,8 @@ Convenience overloads such as `start(workflowKey, businessKey, variables)` remai
 
 ## Durable SQLite engine
 
+PostgreSQL and MySQL support is planned for the next release.
+
 Use the explicit `SQLITE` engine type. It can use a JDBC URL with an optional host-provided `Driver`, or a host-managed `DataSource`.
 
 ```java
