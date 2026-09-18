@@ -39,47 +39,70 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         Objects.requireNonNull(work, "work");
         TransactionState existing = state.get();
         if (existing != null) {
-            try {
-                return work.execute();
-            } catch (Throwable failure) {
-                existing.rollbackOnly = true;
-                throw propagate(failure);
-            }
+            return executeNested(work, existing);
         }
+        return executeOuter(work, immediate);
+    }
 
+    private <T> T executeOuter(WorkflowTransactionalWork<T> work, boolean immediate) {
         Connection connection = null;
         boolean originalAutoCommit = true;
         boolean originalReadOnly = false;
         int originalIsolation = Connection.TRANSACTION_NONE;
         TransactionState outer = null;
+        boolean effectiveImmediate = false;
         try {
             connection = connectionFactory.openPhysical();
             originalAutoCommit = connection.getAutoCommit();
             originalReadOnly = connection.isReadOnly();
             originalIsolation = connection.getTransactionIsolation();
-            if (immediate) beginImmediate(connection);
+            effectiveImmediate = immediate && connectionFactory.isSqlite(connection);
+            if (effectiveImmediate) beginImmediate(connection);
             else connection.setAutoCommit(false);
-            outer = new TransactionState(connection, immediate);
+            outer = new TransactionState();
             state.set(outer);
-            connectionFactory.bind(connection, immediate);
+            connectionFactory.bind(connection, effectiveImmediate);
             T result = work.execute();
             if (outer.rollbackOnly) {
-                rollback(connection, immediate);
+                rollback(connection, effectiveImmediate);
                 throw new WorkflowPersistenceException("JDBC transaction was marked rollback-only by nested work");
             }
-            commit(connection, immediate);
+            commit(connection, effectiveImmediate);
             return result;
-        } catch (Throwable failure) {
-            if (connection != null && outer != null && !outer.completed) {
-                try { rollback(connection, immediate); } catch (Throwable rollbackFailure) { failure.addSuppressed(rollbackFailure); }
-            }
+        } catch (Exception failure) {
+            rollbackAfterFailure(connection, outer, effectiveImmediate, failure);
             throw propagate(failure);
         } finally {
-            state.remove();
-            if (connection != null) {
-                if (connectionFactory.currentTransactionConnection() == connection) connectionFactory.unbind(connection);
-                restoreAndClose(connection, originalAutoCommit, originalReadOnly, originalIsolation);
+            cleanup(connection, outer, effectiveImmediate, originalAutoCommit, originalReadOnly, originalIsolation);
+        }
+    }
+
+    private void rollbackAfterFailure(
+            Connection connection, TransactionState outer, boolean immediate, Exception failure) {
+        if (connection != null && outer != null && !outer.completed) {
+            try {
+                rollback(connection, immediate);
+            } catch (SQLException rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
             }
+        }
+    }
+
+    private void cleanup(Connection connection, TransactionState outer, boolean immediate,
+            boolean autoCommit, boolean readOnly, int isolation) {
+        state.remove();
+        if (connection == null) return;
+        if (outer != null && !outer.completed) rollbackQuietly(connection, immediate);
+        if (connectionFactory.currentTransactionConnection() == connection) connectionFactory.unbind(connection);
+        restoreAndClose(connection, autoCommit, readOnly, isolation);
+    }
+
+    private static <T> T executeNested(WorkflowTransactionalWork<T> work, TransactionState existing) {
+        try {
+            return work.execute();
+        } catch (Exception failure) {
+            existing.rollbackOnly = true;
+            throw propagate(failure);
         }
     }
 
@@ -115,24 +138,27 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         } catch (SQLException ignored) {
             // The primary transaction outcome is more useful; pools discard broken connections on close.
         } finally {
-            try { connection.close(); } catch (SQLException ignored) { }
+            try { connection.close(); } catch (SQLException ignored) {
+                // Closing is best-effort after the transaction has already completed.
+            }
         }
     }
 
-    private static RuntimeException propagate(Throwable failure) {
+    private void rollbackQuietly(Connection connection, boolean immediate) {
+        try {
+            rollback(connection, immediate);
+        } catch (SQLException ignored) {
+            // Preserve the original Error while still attempting a best-effort rollback.
+        }
+    }
+
+    private static RuntimeException propagate(Exception failure) {
         if (failure instanceof RuntimeException runtime) return runtime;
-        if (failure instanceof Error error) throw error;
         return new WorkflowPersistenceException("JDBC transaction failed", failure);
     }
 
     private static final class TransactionState {
-        private final Connection connection;
-        private final boolean immediate;
         private boolean rollbackOnly;
         private boolean completed;
-        private TransactionState(Connection connection, boolean immediate) {
-            this.connection = connection;
-            this.immediate = immediate;
-        }
     }
 }

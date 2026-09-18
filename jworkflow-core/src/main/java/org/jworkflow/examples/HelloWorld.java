@@ -4,8 +4,10 @@ import org.jworkflow.engine.*;
 import org.jworkflow.model.*;
 
 import java.util.Map;
+import java.util.logging.Logger;
 
 public final class HelloWorld {
+    private static final Logger LOGGER = Logger.getLogger(HelloWorld.class.getName());
     private HelloWorld() {
     }
 
@@ -20,11 +22,11 @@ public final class HelloWorld {
 
         WorkflowSnapshot snapshot = workflowEngine.snapshot(instanceId);
 
-        System.out.println(snapshot.variables().get("message"));
-        System.out.println("Workflow instance: " + snapshot.instanceId());
-        System.out.println("Workflow key: " + snapshot.workflowKey());
-        System.out.println("State: " + snapshot.state());
-        System.out.println("Status: " + snapshot.status());
+        LOGGER.info(() -> String.valueOf(snapshot.variables().get("message")));
+        LOGGER.info(() -> "Workflow instance: " + snapshot.instanceId());
+        LOGGER.info(() -> "Workflow key: " + snapshot.workflowKey());
+        LOGGER.info(() -> "State: " + snapshot.state());
+        LOGGER.info(() -> "Status: " + snapshot.status());
     }
 
     private static String messageFrom(String[] args) {

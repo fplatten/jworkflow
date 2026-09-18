@@ -98,4 +98,8 @@ public final class JdbcWorkflowEngineDurabilityTest {
     private static WorkflowCommandMetadata metadata(String key,WorkflowInstanceId id){return new WorkflowCommandMetadata(null,key,"durable","1",id,"order-1","corr-1",null,null,null,"test",null,null,Map.of());}
     private static WorkflowCommandMetadata metadataFor(String key,String workflow,String business,WorkflowInstanceId id){return new WorkflowCommandMetadata(null,key,workflow,"1",id,business,"corr-"+business,null,null,null,"test",null,null,Map.of());}
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

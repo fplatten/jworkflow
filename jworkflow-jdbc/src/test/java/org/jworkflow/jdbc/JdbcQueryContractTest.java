@@ -33,4 +33,8 @@ public final class JdbcQueryContractTest {
  private static WorkflowSnapshot snapshot(String business,String correlation,WorkflowStatus status,String state,Instant updated,WorkflowDefinition d){return new WorkflowSnapshot(WorkflowInstanceId.random(),d.name(),d.version(),d.revision(),business,correlation,state,status,Map.of("businessKey",business),0,NOW.minusSeconds(700),updated);}
  private static WorkflowEvent event(WorkflowSnapshot s,String name,Instant at){return new WorkflowEvent(new EventMetadata(null,new EventName(name),"query-test",s.correlationId(),null,"trace",s.instanceId(),s.businessKey(),null,"1",at,at,Map.of("view","test")),new EventMessage(Map.of("businessKey",s.businessKey()),"application/json","query-event","1",false,Map.of()));}
  private static Fixture fixture()throws Exception{String url="jdbc:sqlite:"+Files.createTempFile("jworkflow-query-",".sqlite").toAbsolutePath();return new Fixture(url,JdbcWorkflowPersistence.create(url,null,null,new JDBC(),null,true,Map.of()));}private static int count(Fixture f,String table)throws Exception{try(var c=java.sql.DriverManager.getConnection(f.url);var s=c.createStatement();var r=s.executeQuery("select count(*) from "+table)){return r.next()?r.getInt(1):0;}}private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}private record Fixture(String url,JdbcWorkflowPersistence persistence){}
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

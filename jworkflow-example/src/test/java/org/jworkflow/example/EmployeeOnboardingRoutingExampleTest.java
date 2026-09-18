@@ -35,4 +35,8 @@ public final class EmployeeOnboardingRoutingExampleTest {
     }
 
     private static JdbcWorkflowEngine engine(Path database,WorkflowDefinitionBuilder definition)throws Exception{WorkflowEngineBuilder builder=WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl("jdbc:sqlite:"+database).initialize().timerPolling(false);if(definition!=null)builder.definition(definition);return(JdbcWorkflowEngine)builder.build();}
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

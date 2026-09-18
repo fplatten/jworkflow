@@ -16,8 +16,10 @@ import org.jworkflow.model.WorkflowStatus;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.logging.Logger;
 
 public final class OrderFulfillmentExample {
+    private static final Logger LOGGER = Logger.getLogger(OrderFulfillmentExample.class.getName());
     private OrderFulfillmentExample() {
     }
 
@@ -25,7 +27,7 @@ public final class OrderFulfillmentExample {
         commandDispatcher.dispatch(new CreateOrderCommand("order-1001"));
     }
 
-    public static WorkflowSnapshot runSuccessfulOrder() throws Exception {
+    public static WorkflowSnapshot runSuccessfulOrder() throws ClassNotFoundException, InterruptedException {
         WorkflowEngine.clearInstance();
         OrderFulfillmentService orderService = new OrderFulfillmentService();
         OrderCommandDispatcher commandDispatcher = new WorkflowOrderCommandDispatcher(orderService, Events::publish);
@@ -55,7 +57,7 @@ public final class OrderFulfillmentExample {
                 .buildAndSetInstance()) {
             runSuccessfulOrder(commandDispatcher);
             WorkflowSnapshot snapshot = awaitAllWorkflowsCompleted();
-            System.out.println(snapshot.workflowKey() + " " + snapshot.businessKey() + " -> " + snapshot.state());
+            LOGGER.info(() -> snapshot.workflowKey() + " " + snapshot.businessKey() + " -> " + snapshot.state());
         } finally {
             WorkflowEngine.clearInstance();
         }

@@ -9,6 +9,6 @@ public interface InboxRoutingTranslator {
     List<RouteWorkflowEventCommand> translate(InboxMessage message);
 
     default InboxEventTranslator asCommandTranslator() {
-        return this::translate;
+        return message -> List.copyOf(translate(message));
     }
 }

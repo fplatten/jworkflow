@@ -5,7 +5,6 @@ import org.jworkflow.events.CorrelationId;
 import org.jworkflow.events.CausationId;
 
 import java.time.Instant;
-import java.util.Objects;
 import java.util.UUID;
 
 public record InboxMessage(

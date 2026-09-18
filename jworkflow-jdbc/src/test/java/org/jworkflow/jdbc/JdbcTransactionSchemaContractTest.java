@@ -338,4 +338,8 @@ public final class JdbcTransactionSchemaContractTest {
         if (type == boolean.class) return false; if (type == int.class) return 0; if (type == long.class) return 0L;
         return null;
     }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

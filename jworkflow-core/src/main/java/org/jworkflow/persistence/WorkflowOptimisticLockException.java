@@ -5,7 +5,7 @@ import org.jworkflow.model.WorkflowInstanceId;
 import java.util.Objects;
 
 public final class WorkflowOptimisticLockException extends WorkflowPersistenceException {
-    private final WorkflowInstanceId instanceId;
+    private final transient WorkflowInstanceId instanceId;
     private final long expectedVersion;
     private final Long observedVersion;
 

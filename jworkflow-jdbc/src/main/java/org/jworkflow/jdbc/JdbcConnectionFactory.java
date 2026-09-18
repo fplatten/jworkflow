@@ -1,11 +1,7 @@
 package org.jworkflow.jdbc;
 
-import org.jworkflow.definition.*;
-import org.jworkflow.dsl.*;
-import org.jworkflow.engine.*;
-import org.jworkflow.events.*;
-import org.jworkflow.model.*;
-import org.jworkflow.persistence.*;
+
+import org.sqlite.SQLiteConnection;
 
 import java.sql.Connection;
 import java.sql.Driver;
@@ -91,14 +87,14 @@ final class JdbcConnectionFactory {
 
     private void configure(Connection connection) throws SQLException {
         if (!isSqlite(connection)) return;
+        connection.unwrap(SQLiteConnection.class).setBusyTimeout(sqliteBusyTimeoutMillis);
         try (Statement statement = connection.createStatement()) {
             statement.execute("pragma foreign_keys = on");
-            statement.execute("pragma busy_timeout = " + sqliteBusyTimeoutMillis);
             if (sqliteWalEnabled) statement.execute("pragma journal_mode = wal");
         }
     }
 
-    private boolean isSqlite(Connection connection) throws SQLException {
+    boolean isSqlite(Connection connection) throws SQLException {
         String effectiveUrl = jdbcUrl;
         if (effectiveUrl == null && connection.getMetaData() != null) effectiveUrl = connection.getMetaData().getURL();
         return effectiveUrl != null && effectiveUrl.toLowerCase(java.util.Locale.ROOT).startsWith("jdbc:sqlite:");

@@ -75,7 +75,7 @@ public final class ParallelOrderRoutingExampleTest {
                     && workflows.stream().allMatch(workflow -> workflow.status() == WorkflowStatus.COMPLETED)) {
                 return workflows;
             }
-            Thread.sleep(10L);
+            java.util.concurrent.locks.LockSupport.parkNanos(Duration.ofMillis(10).toNanos());
         }
         throw new AssertionError("Timed out waiting for both order workflows to complete");
     }
@@ -104,5 +104,9 @@ public final class ParallelOrderRoutingExampleTest {
                         + workflow.variables());
             }
         }
+    }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
     }
 }

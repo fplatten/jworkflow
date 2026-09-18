@@ -1,8 +1,5 @@
 package org.jworkflow.engine;
 
-import org.jworkflow.definition.*;
-import org.jworkflow.dsl.*;
-import org.jworkflow.engine.*;
 import org.jworkflow.events.*;
 import org.jworkflow.model.*;
 import org.jworkflow.persistence.*;
@@ -27,10 +24,28 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 public final class InMemoryWorkflowEngine implements WorkflowEngine {
+    private static final String TEXT_EVENT_CORRELATED = "event.correlated";
+    private static final String TEXT_COMMAND = "command";
+    private static final String TEXT_START = "start";
+    private static final String TEXT_SIGNAL = "signal";
+    private static final String TEXT_RETRY_FAILED_STEP = "retryFailedStep";
+    private static final String TEXT_CANCEL = "cancel";
+    private static final String TEXT_RESUME = "resume";
+    private static final String TEXT_WORKFLOW_COMPLETED = "workflow.completed";
+    private static final String TEXT_ACTION = "action";
+    private static final String TEXT_SUCCESS = "success";
+    private static final String TEXT_TRANSITION_TAKEN = "transition.taken";
+    private static final String TEXT_ATTEMPT = "attempt";
+    private static final String TEXT_JWORKFLOW = "jworkflow";
+    private static final String TEXT_WORKFLOW_KEY = "workflowKey";
+    private static final String TEXT_WORKFLOW_VERSION = "workflowVersion";
+    private static final String TEXT_STATE = "state";
+    private static final String TEXT_BUSINESS_KEY = "businessKey";
     private final Map<WorkflowInstanceId, WorkflowSnapshot> instances = new ConcurrentHashMap<>();
     private final Map<String, WorkflowInstanceId> instancesByBusinessKey = new ConcurrentHashMap<>();
     private final Map<String, IdempotentResult> idempotentResults = new ConcurrentHashMap<>();
@@ -47,10 +62,11 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     private final BlockingQueue<WorkflowEvent> incomingEvents = new LinkedBlockingQueue<>();
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final WorkflowEngineContext context = new InMemoryWorkflowEngineContext();
-    private volatile ExecutorService eventExecutor;
+    private final AtomicReference<ExecutorService> eventExecutor = new AtomicReference<>();
     private final Clock clock;
     private final EventCapturePolicy eventCapturePolicy;
 
+    @SuppressWarnings("java:S107") // Internal composition root; clients use scoped factories or the builder.
     private InMemoryWorkflowEngine(
             WorkflowDefinitionRegistry definitions,
             EventPublisher eventPublisher,
@@ -135,6 +151,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 workflowStartEvents, listenerInstances, persistence, Clock.systemUTC(), CaptureAllEventPolicy.INSTANCE);
     }
 
+    @SuppressWarnings("java:S107") // Compatibility factory retained for existing clients.
     public static InMemoryWorkflowEngine create(WorkflowDefinitionRegistry definitions, EventPublisher eventPublisher,
             Map<String, StepHandler> stepHandlers, BranchConditionEvaluator branchConditionEvaluator,
             Map<String, String> workflowStartEvents, Map<String, Object> listenerInstances,
@@ -181,7 +198,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     @Override
     public void close() {
         if (running.compareAndSet(true, false)) {
-            ExecutorService executor = eventExecutor;
+            ExecutorService executor = eventExecutor.get();
             if (executor != null) {
                 executor.shutdownNow();
             }
@@ -189,18 +206,19 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     }
 
     private void ensureEventLoopStarted() {
-        if (eventExecutor != null) {
+        if (eventExecutor.get() != null) {
             return;
         }
         synchronized (this) {
-            if (eventExecutor == null) {
+            if (eventExecutor.get() == null) {
                 ExecutorService executor = Executors.newSingleThreadExecutor(new WorkflowThreadFactory());
-                eventExecutor = executor;
+                eventExecutor.set(executor);
                 executor.execute(this::eventLoop);
             }
         }
     }
 
+    @SuppressWarnings("java:S3776") // Lifecycle, interruption, and timer polling form one event loop.
     private void eventLoop() {
         int idlePolls = 0;
         while (running.get()) {
@@ -213,8 +231,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 } else if (pendingTimers().isEmpty() && ++idlePolls >= 10) {
                     synchronized (this) {
                         if (incomingEvents.isEmpty() && pendingTimers().isEmpty()) {
-                            ExecutorService executor = eventExecutor;
-                            eventExecutor = null;
+                            ExecutorService executor = eventExecutor.getAndSet(null);
                             if (executor != null) {
                                 executor.shutdown();
                             }
@@ -226,8 +243,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 synchronized (this) {
-                    ExecutorService executor = eventExecutor;
-                    eventExecutor = null;
+                    ExecutorService executor = eventExecutor.getAndSet(null);
                     if (executor != null) {
                         executor.shutdown();
                     }
@@ -264,7 +280,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 WorkflowInstanceId started = result.workflowInstanceId();
                 startedInstances.add(started);
                 signal(started, event);
-                eventPublisher.publish(incomingObservation("event.correlated", event, instances.get(started)));
+                eventPublisher.publish(incomingObservation(TEXT_EVENT_CORRELATED, event, instances.get(started)));
             }
         }
 
@@ -273,7 +289,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             WorkflowSnapshot snapshot = instances.get(explicitInstance);
             if (snapshot != null && acceptsEvent(snapshot, event)) {
                 signal(explicitInstance, event);
-                eventPublisher.publish(incomingObservation("event.correlated", event, snapshot));
+                eventPublisher.publish(incomingObservation(TEXT_EVENT_CORRELATED, event, snapshot));
             } else {
                 eventPublisher.publish(incomingObservation("event.ignored", event, snapshot));
             }
@@ -293,7 +309,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 .toList();
         targets.forEach(instanceId -> {
             signal(instanceId, event);
-            eventPublisher.publish(incomingObservation("event.correlated", event, instances.get(instanceId)));
+            eventPublisher.publish(incomingObservation(TEXT_EVENT_CORRELATED, event, instances.get(instanceId)));
         });
         if (startedInstances.isEmpty() && targets.isEmpty()) {
             eventPublisher.publish(incomingObservation("event.ignored", event, null));
@@ -312,13 +328,13 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
 
     @Override
     public StartWorkflowResult start(StartWorkflowCommand command) {
-        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(command, TEXT_COMMAND);
         IdempotencyFingerprint fingerprint = idempotencyFingerprint(command);
-        return withIdempotencyLock("start", fingerprint, () -> startLocked(command, fingerprint));
+        return withIdempotencyLock(TEXT_START, fingerprint, () -> startLocked(command, fingerprint));
     }
 
     private StartWorkflowResult startLocked(StartWorkflowCommand command, IdempotencyFingerprint fingerprint) {
-        StartWorkflowResult priorResult = findStartResult("start", fingerprint);
+        StartWorkflowResult priorResult = findStartResult(TEXT_START, fingerprint);
         if (priorResult != null) {
             return priorResult.asIdempotentRepeat();
         }
@@ -365,20 +381,20 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 snapshot,
                 List.of(startedEvent.metadata().eventId().toString()),
                 false);
-        remember("start", fingerprint, result);
+        remember(TEXT_START, fingerprint, result);
         return result;
     }
 
     @Override
     public WorkflowCommandResult signal(SignalWorkflowCommand command) {
-        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(command, TEXT_COMMAND);
         IdempotencyFingerprint fingerprint = idempotencyFingerprint(command);
-        return withIdempotencyLock("signal", fingerprint,
+        return withIdempotencyLock(TEXT_SIGNAL, fingerprint,
                 () -> withInstanceLock(command.instanceId(), () -> signalLocked(command, fingerprint)));
     }
 
     private WorkflowCommandResult signalLocked(SignalWorkflowCommand command, IdempotencyFingerprint fingerprint) {
-        WorkflowCommandResult priorResult = findCommandResult("signal", fingerprint);
+        WorkflowCommandResult priorResult = findCommandResult(TEXT_SIGNAL, fingerprint);
         if (priorResult != null) {
             return priorResult.asIdempotentRepeat();
         }
@@ -387,7 +403,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         snapshot = advanceCurrentStep(snapshot, command.signal());
         snapshot = advanceRoutingNodes(snapshot);
         WorkflowCommandResult result = commandResult(command.metadata(), command.instanceId(), WorkflowCommandStatus.ACCEPTED, snapshot);
-        remember("signal", fingerprint, result);
+        remember(TEXT_SIGNAL, fingerprint, result);
         return result;
     }
 
@@ -406,9 +422,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
 
     @Override
     public WorkflowCommandResult retryFailedStep(RetryFailedStepCommand command) {
-        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(command, TEXT_COMMAND);
         IdempotencyFingerprint fingerprint = idempotencyFingerprint(command);
-        return withIdempotencyLock("retryFailedStep", fingerprint,
+        return withIdempotencyLock(TEXT_RETRY_FAILED_STEP, fingerprint,
                 () -> withInstanceLock(command.instanceId(), () -> retryFailedStepLocked(command, fingerprint)));
     }
 
@@ -416,27 +432,27 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             RetryFailedStepCommand command,
             IdempotencyFingerprint fingerprint
     ) {
-        WorkflowCommandResult priorResult = findCommandResult("retryFailedStep", fingerprint);
+        WorkflowCommandResult priorResult = findCommandResult(TEXT_RETRY_FAILED_STEP, fingerprint);
         if (priorResult != null) {
             return priorResult.asIdempotentRepeat();
         }
         WorkflowSnapshot snapshot = requireInstance(command.instanceId());
         snapshot = retryFailedStep(snapshot, command.stepId());
         WorkflowCommandResult result = commandResult(command.metadata(), command.instanceId(), WorkflowCommandStatus.ACCEPTED, snapshot);
-        remember("retryFailedStep", fingerprint, result);
+        remember(TEXT_RETRY_FAILED_STEP, fingerprint, result);
         return result;
     }
 
     @Override
     public WorkflowCommandResult cancel(CancelWorkflowCommand command) {
-        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(command, TEXT_COMMAND);
         IdempotencyFingerprint fingerprint = idempotencyFingerprint(command);
-        return withIdempotencyLock("cancel", fingerprint,
+        return withIdempotencyLock(TEXT_CANCEL, fingerprint,
                 () -> withInstanceLock(command.instanceId(), () -> cancelLocked(command, fingerprint)));
     }
 
     private WorkflowCommandResult cancelLocked(CancelWorkflowCommand command, IdempotencyFingerprint fingerprint) {
-        WorkflowCommandResult priorResult = findCommandResult("cancel", fingerprint);
+        WorkflowCommandResult priorResult = findCommandResult(TEXT_CANCEL, fingerprint);
         if (priorResult != null) {
             return priorResult.asIdempotentRepeat();
         }
@@ -450,20 +466,20 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             eventPublisher.publish(simpleLifecycleEvent("workflow.canceled", snapshot, Map.of()));
         }
         WorkflowCommandResult result = commandResult(command.metadata(), command.instanceId(), status, snapshot);
-        remember("cancel", fingerprint, result);
+        remember(TEXT_CANCEL, fingerprint, result);
         return result;
     }
 
     @Override
     public WorkflowCommandResult resume(ResumeWorkflowCommand command) {
-        Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(command, TEXT_COMMAND);
         IdempotencyFingerprint fingerprint = idempotencyFingerprint(command);
-        return withIdempotencyLock("resume", fingerprint,
+        return withIdempotencyLock(TEXT_RESUME, fingerprint,
                 () -> withInstanceLock(command.instanceId(), () -> resumeLocked(command, fingerprint)));
     }
 
     private WorkflowCommandResult resumeLocked(ResumeWorkflowCommand command, IdempotencyFingerprint fingerprint) {
-        WorkflowCommandResult priorResult = findCommandResult("resume", fingerprint);
+        WorkflowCommandResult priorResult = findCommandResult(TEXT_RESUME, fingerprint);
         if (priorResult != null) {
             return priorResult.asIdempotentRepeat();
         }
@@ -479,7 +495,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             status = WorkflowCommandStatus.ACCEPTED;
         }
         WorkflowCommandResult result = commandResult(command.metadata(), command.instanceId(), status, snapshot);
-        remember("resume", fingerprint, result);
+        remember(TEXT_RESUME, fingerprint, result);
         return result;
     }
 
@@ -537,6 +553,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return List.copyOf(timers);
     }
 
+    @SuppressWarnings("java:S3776") // Timer guards form one atomic state transition.
     private WorkflowTimer fireTimer(WorkflowTimer timer) {
         WorkflowSnapshot snapshot = instances.get(timer.workflowInstanceId());
         if (snapshot != null
@@ -566,7 +583,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                             updated = advanceRoutingNodes(definition, updated);
                         }
                         if (updated.status() == WorkflowStatus.COMPLETED) {
-                            eventPublisher.publish(simpleLifecycleEvent("workflow.completed", updated, Map.of()));
+                            eventPublisher.publish(simpleLifecycleEvent(TEXT_WORKFLOW_COMPLETED, updated, Map.of()));
                         }
                     }
                     return firedTimer;
@@ -608,7 +625,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             return true;
         }
         return startNode.type() == WorkflowNodeType.GATEWAY
-                && startNode.transitions().stream().anyMatch(transition -> "start".equals(transition.name()));
+                && startNode.transitions().stream().anyMatch(transition -> TEXT_START.equals(transition.name()));
     }
 
     private WorkflowSnapshot advanceCurrentStep(WorkflowSnapshot snapshot, WorkflowSignal signal) {
@@ -644,7 +661,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             return snapshot;
         }
         eventPublisher.publish(simpleLifecycleEvent("step.entered", snapshot,
-                Map.of("step", node.name(), "action", node.action() == null ? "" : node.action())));
+                Map.of("step", node.name(), TEXT_ACTION, node.action() == null ? "" : node.action())));
         StepHandler handler = stepHandlers.get(node.action());
         if (handler == null) {
             if (signal != null && isStepSuccessEvent(node, signal.eventType())) {
@@ -694,6 +711,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         }
     }
 
+    @SuppressWarnings("java:S3776") // Validation and exception translation share one invocation boundary.
     private void invokeListener(
             WorkflowSnapshot snapshot,
             WorkflowDefinition definition,
@@ -706,7 +724,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             throw new WorkflowInfrastructureException("No listener registered for " + node.listenerClassName(), null);
         }
         WorkflowEvent listenerEvent = event == null && signal != null ? eventFromSignal(signal, snapshot) : event;
-        WorkflowExecutionContext context = new WorkflowExecutionContext(
+        WorkflowExecutionContext executionContext = new WorkflowExecutionContext(
                 snapshot.instanceId(),
                 snapshot.workflowKey(),
                 definition.version(),
@@ -717,9 +735,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 signal == null ? null : signal.causationId(),
                 null);
         try {
-            try (WorkflowExecutionContext.Scope ignored = WorkflowExecutionContext.bind(context)) {
+        try (WorkflowExecutionContext.Scope ignored = WorkflowExecutionContext.bind(executionContext)) {
                 if (node.listenerInvocation() != null) {
-                    Object[] arguments = listenerArguments(node.listenerInvocation(), listenerEvent, context);
+                    Object[] arguments = listenerArguments(node.listenerInvocation(), listenerEvent, executionContext);
                     Method method = listenerMethod(listener, node.listenerInvocation().methodName(), arguments);
                     method.invoke(listener, arguments);
                 } else {
@@ -778,6 +796,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         }).toArray();
     }
 
+    @SuppressWarnings("java:S3776") // Reflection matching validates every candidate and argument.
     private static Method listenerMethod(Object listener, String methodName, Object[] arguments) throws NoSuchMethodException {
         Method match = null;
         for (Method candidate : listener.getClass().getMethods()) {
@@ -813,7 +832,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     ) {
         Map<String, Object> mergedVariables = new LinkedHashMap<>(merge(snapshot.variables(), variables));
         mergedVariables.remove(retryKey(node.name()));
-        WorkflowTransition transition = selectStepTransition(node, "success");
+        WorkflowTransition transition = selectStepTransition(node, TEXT_SUCCESS);
         if (transition == null) {
             return updateStatus(snapshot, snapshot.state(), WorkflowStatus.COMPLETED, mergedVariables);
         }
@@ -823,11 +842,11 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 WorkflowStatus.RUNNING,
                 mergedVariables);
         scheduleTimeout(definition, updated, clock.instant());
-        eventPublisher.publish(simpleLifecycleEvent("step.completed", updated, Map.of("step", node.name(), "action", node.action())));
-        eventPublisher.publish(simpleLifecycleEvent("transition.taken", updated, Map.of("from", node.name(), "to", transition.targetNode())));
+        eventPublisher.publish(simpleLifecycleEvent("step.completed", updated, Map.of("step", node.name(), TEXT_ACTION, node.action())));
+        eventPublisher.publish(simpleLifecycleEvent(TEXT_TRANSITION_TAKEN, updated, Map.of("from", node.name(), "to", transition.targetNode())));
         updated = advanceRoutingNodes(definition, updated);
         if (updated.status() == WorkflowStatus.COMPLETED) {
-            eventPublisher.publish(simpleLifecycleEvent("workflow.completed", updated, Map.of()));
+            eventPublisher.publish(simpleLifecycleEvent(TEXT_WORKFLOW_COMPLETED, updated, Map.of()));
         }
         return updated;
     }
@@ -845,12 +864,12 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 merge(snapshot.variables(), signalData(signal)));
         scheduleTimeout(definition, updated, clock.instant());
         eventPublisher.publish(simpleLifecycleEvent(
-                "transition.taken",
+                TEXT_TRANSITION_TAKEN,
                 updated,
                 Map.of("from", node.name(), "to", node.waitDefinition().targetNode())));
         updated = advanceRoutingNodes(definition, updated);
         if (updated.status() == WorkflowStatus.COMPLETED) {
-            eventPublisher.publish(simpleLifecycleEvent("workflow.completed", updated, Map.of()));
+            eventPublisher.publish(simpleLifecycleEvent(TEXT_WORKFLOW_COMPLETED, updated, Map.of()));
         }
         return updated;
     }
@@ -868,12 +887,12 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         WorkflowSnapshot updated = updateStatus(snapshot, failure.targetNode(), WorkflowStatus.RUNNING, variables);
         scheduleTimeout(definition, updated, clock.instant());
         eventPublisher.publish(simpleLifecycleEvent(
-                "transition.taken",
+                TEXT_TRANSITION_TAKEN,
                 updated,
                 Map.of("from", node.name(), "to", failure.targetNode())));
         updated = advanceRoutingNodes(definition, updated);
         if (updated.status() == WorkflowStatus.COMPLETED) {
-            eventPublisher.publish(simpleLifecycleEvent("workflow.completed", updated, Map.of()));
+            eventPublisher.publish(simpleLifecycleEvent(TEXT_WORKFLOW_COMPLETED, updated, Map.of()));
         }
         return updated;
     }
@@ -891,8 +910,8 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         failedVariables.put(retryKey, attempts);
         Map<String, String> failureHeaders = new LinkedHashMap<>();
         failureHeaders.put("step", node.name());
-        failureHeaders.put("action", node.action());
-        failureHeaders.put("attempt", Integer.toString(attempts));
+        failureHeaders.put(TEXT_ACTION, node.action());
+        failureHeaders.put(TEXT_ATTEMPT, Integer.toString(attempts));
         if (exception != null) {
             failureHeaders.put("error", exception.getClass().getName());
         }
@@ -921,7 +940,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 fallback = transition;
             }
         }
-        return "success".equals(name) ? fallback : null;
+        return TEXT_SUCCESS.equals(name) ? fallback : null;
     }
 
     private WorkflowSnapshot retryFailedStep(WorkflowSnapshot snapshot, String stepId) {
@@ -946,17 +965,18 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         if (node.retryPolicy() != null && attempts >= node.retryPolicy().maxAttempts()) {
             throw new WorkflowInvalidStateException("Retry attempts exhausted for step " + stepId);
         }
-        WorkflowSnapshot running = updateStatus(snapshot, snapshot.state(), WorkflowStatus.RUNNING, snapshot.variables());
+        WorkflowSnapshot runningSnapshot = updateStatus(snapshot, snapshot.state(), WorkflowStatus.RUNNING, snapshot.variables());
         Duration backoff = node.retryPolicy() == null ? Duration.ZERO : node.retryPolicy().backoff();
         if (!backoff.isZero()) {
-            scheduleRetry(running, node, backoff, attempts + 1);
-            return updateStatus(running, running.state(), WorkflowStatus.WAITING, running.variables());
+            scheduleRetry(runningSnapshot, node, backoff, attempts + 1);
+            return updateStatus(runningSnapshot, runningSnapshot.state(), WorkflowStatus.WAITING, runningSnapshot.variables());
         }
-        eventPublisher.publish(simpleLifecycleEvent("retry.scheduled", running,
-                Map.of("step", stepId, "attempt", Integer.toString(attempts + 1))));
-        return advanceCurrentStep(running, null);
+        eventPublisher.publish(simpleLifecycleEvent("retry.scheduled", runningSnapshot,
+                Map.of("step", stepId, TEXT_ATTEMPT, Integer.toString(attempts + 1))));
+        return advanceCurrentStep(runningSnapshot, null);
     }
 
+    @SuppressWarnings("java:S3776") // Explicit workflow-node state-machine dispatch loop.
     private WorkflowSnapshot advanceRoutingNodes(WorkflowDefinition definition, WorkflowSnapshot snapshot) {
         WorkflowSnapshot current = snapshot;
         boolean advanced;
@@ -981,7 +1001,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                         current.variables());
                 scheduleTimeout(definition, updated, clock.instant());
                 eventPublisher.publish(simpleLifecycleEvent(
-                        "transition.taken",
+                        TEXT_TRANSITION_TAKEN,
                         updated,
                         Map.of("from", node.name(), "to", transition.targetNode())));
                 current = updated;
@@ -996,7 +1016,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                         loopRoute.variables());
                 scheduleTimeout(definition, updated, clock.instant());
                 eventPublisher.publish(simpleLifecycleEvent(
-                        "transition.taken",
+                        TEXT_TRANSITION_TAKEN,
                         updated,
                         Map.of("from", node.name(), "to", loopRoute.targetNode())));
                 current = updated;
@@ -1023,7 +1043,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                                     "join", node.fork().joinNode())));
                 }
                 eventPublisher.publish(simpleLifecycleEvent(
-                        "transition.taken",
+                        TEXT_TRANSITION_TAKEN,
                         updated,
                         Map.of("from", node.name(), "to", node.fork().joinNode())));
                 current = updated;
@@ -1042,7 +1062,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                         updated,
                         Map.of("subWorkflow", node.name(), "targetWorkflow", node.subWorkflow().workflowName())));
                 eventPublisher.publish(simpleLifecycleEvent(
-                        "transition.taken",
+                        TEXT_TRANSITION_TAKEN,
                         updated,
                         Map.of("from", node.name(), "to", route.targetNode())));
                 current = updated;
@@ -1099,7 +1119,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 eventPublisher.publish(simpleLifecycleEvent(node.join().emittedEvent().value(), advanced, Map.of("join", node.name())));
             }
             eventPublisher.publish(simpleLifecycleEvent(
-                    "transition.taken",
+                    TEXT_TRANSITION_TAKEN,
                     advanced,
                     Map.of("from", node.name(), "to", node.join().nextNode())));
             return advanced;
@@ -1244,7 +1264,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         timers.add(timer);
         persistTimer(timer);
         eventPublisher.publish(simpleLifecycleEvent("retry.scheduled", snapshot,
-                Map.of("step", node.name(), "attempt", Integer.toString(nextAttempt))));
+                Map.of("step", node.name(), TEXT_ATTEMPT, Integer.toString(nextAttempt))));
     }
 
     private void cancelPendingTimers(WorkflowInstanceId instanceId) {
@@ -1273,7 +1293,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 new EventMetadata(
                         null,
                         new EventName("workflow.started"),
-                        "jworkflow",
+                        TEXT_JWORKFLOW,
                         command.metadata().correlationId(),
                         command.metadata().causationId(),
                         command.metadata().traceId(),
@@ -1284,9 +1304,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                         now,
                         now,
                         Map.of(
-                                "workflowKey", snapshot.workflowKey(),
-                                "workflowVersion", snapshot.workflowVersion(),
-                                "state", snapshot.state(),
+                                TEXT_WORKFLOW_KEY, snapshot.workflowKey(),
+                                TEXT_WORKFLOW_VERSION, snapshot.workflowVersion(),
+                                TEXT_STATE, snapshot.state(),
                                 "status", snapshot.status().name())),
                 EventMessage.empty());
     }
@@ -1351,11 +1371,11 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             value = event.metadata().businessKey();
         }
         if (value == null) {
-            value = event.metadata().headers().get("businessKey");
+            value = event.metadata().headers().get(TEXT_BUSINESS_KEY);
         }
         if (value == null || value.toString().isBlank()) {
             throw new IllegalArgumentException("Published workflow event must include correlation key "
-                    + (correlationKey == null || correlationKey.isBlank() ? "businessKey" : correlationKey));
+                    + (correlationKey == null || correlationKey.isBlank() ? TEXT_BUSINESS_KEY : correlationKey));
         }
         return value.toString();
     }
@@ -1371,7 +1391,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 }
             }
         }
-        variables.putIfAbsent("businessKey", businessKey);
+        variables.putIfAbsent(TEXT_BUSINESS_KEY, businessKey);
         return variables;
     }
 
@@ -1394,7 +1414,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
 
     private static boolean isStepSuccessEvent(WorkflowNode node, String eventType) {
         for (WorkflowTransition transition : node.transitions()) {
-            if ("success".equals(transition.name())
+            if (TEXT_SUCCESS.equals(transition.name())
                     && transition.emittedEvent() != null
                     && transition.emittedEvent().value().equals(eventType)) {
                 return true;
@@ -1430,7 +1450,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                     Map<String, String> headers = new LinkedHashMap<>(event.metadata().headers());
                     headers.putIfAbsent("workflowName", context.workflowName());
                     headers.putIfAbsent("workflowStep", context.stepName());
-                    headers.putIfAbsent("businessKey", context.businessKey());
+                    headers.putIfAbsent(TEXT_BUSINESS_KEY, context.businessKey());
                     return event.withMetadata(event.metadata().withWorkflowContext(
                             context.correlationId(),
                             context.event() == null ? context.causationId() : context.event().metadata().eventId().toString(),
@@ -1448,7 +1468,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 new EventMetadata(
                         null,
                         new EventName(signal.eventType()),
-                        "jworkflow",
+                        TEXT_JWORKFLOW,
                         signal.correlationId(),
                         signal.causationId(),
                         null,
@@ -1520,16 +1540,16 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     ) {
         Instant now = clock.instant();
         LinkedHashMap<String, String> observationHeaders = new LinkedHashMap<>();
-        observationHeaders.put("workflowKey", snapshot.workflowKey());
-        observationHeaders.put("workflowVersion", snapshot.workflowVersion());
-        observationHeaders.put("state", snapshot.state());
+        observationHeaders.put(TEXT_WORKFLOW_KEY, snapshot.workflowKey());
+        observationHeaders.put(TEXT_WORKFLOW_VERSION, snapshot.workflowVersion());
+        observationHeaders.put(TEXT_STATE, snapshot.state());
         observationHeaders.put("status", snapshot.status().name());
         observationHeaders.putAll(headers);
         WorkflowEvent event = SafeEventCapturePolicy.filter(eventCapturePolicy, new WorkflowEvent(
                 new EventMetadata(
                         null,
                         new EventName(name),
-                        "jworkflow",
+                        TEXT_JWORKFLOW,
                         null,
                         null,
                         null,
@@ -1562,12 +1582,12 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         LinkedHashMap<String, String> headers = new LinkedHashMap<>();
         headers.put("eventName", incoming.eventName().value());
         if (snapshot != null) {
-            headers.put("workflowKey", snapshot.workflowKey());
-            headers.put("workflowVersion", snapshot.workflowVersion());
-            headers.put("state", snapshot.state());
+            headers.put(TEXT_WORKFLOW_KEY, snapshot.workflowKey());
+            headers.put(TEXT_WORKFLOW_VERSION, snapshot.workflowVersion());
+            headers.put(TEXT_STATE, snapshot.state());
         }
         EventMetadata metadata = incoming.metadata();
-        return new WorkflowEvent(new EventMetadata(null, new EventName(name), "jworkflow",
+        return new WorkflowEvent(new EventMetadata(null, new EventName(name), TEXT_JWORKFLOW,
                 metadata.correlationId(), metadata.causationId(), metadata.traceId(),
                 snapshot == null ? metadata.workflowInstanceId() : snapshot.instanceId(),
                 snapshot == null ? metadata.businessKey() : snapshot.businessKey(), metadata.tenantId(), "1",

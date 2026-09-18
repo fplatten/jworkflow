@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -28,20 +29,27 @@ final class JdbcSchemaInitializer {
 
     static void initialize(JdbcConnectionFactory connectionFactory) {
         try (Connection connection = connectionFactory.openPhysical()) {
-            boolean autoCommit = connection.getAutoCommit();
-            connection.setAutoCommit(false);
-            try {
-                createHistory(connection);
-                for (Migration migration : MIGRATIONS) applyIfNeeded(connection, migration);
-                connection.commit();
-            } catch (Throwable failure) {
-                connection.rollback();
-                throw failure;
-            } finally {
-                connection.setAutoCommit(autoCommit);
-            }
+            applyMigrations(connection);
         } catch (Exception exception) {
             throw new WorkflowInfrastructureException("Failed to initialize jworkflow schema", exception);
+        }
+    }
+
+    private static void applyMigrations(Connection connection)
+            throws SQLException, IOException, NoSuchAlgorithmException {
+        boolean autoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            createHistory(connection);
+            for (Migration migration : MIGRATIONS) {
+                applyIfNeeded(connection, migration);
+            }
+            connection.commit();
+        } catch (Exception failure) {
+            connection.rollback();
+            throw failure;
+        } finally {
+            connection.setAutoCommit(autoCommit);
         }
     }
 
@@ -58,20 +66,12 @@ final class JdbcSchemaInitializer {
         }
     }
 
-    private static void applyIfNeeded(Connection connection, Migration migration) throws Exception {
+    private static void applyIfNeeded(Connection connection, Migration migration)
+            throws SQLException, IOException, NoSuchAlgorithmException {
         String sql = read(migration.resource());
         String checksum = sha256(sql);
-        try (PreparedStatement query = connection.prepareStatement(
-                "select checksum from jworkflow_schema_history where version = ?")) {
-            query.setInt(1, migration.version());
-            try (ResultSet rows = query.executeQuery()) {
-                if (rows.next()) {
-                    if (!checksum.equals(rows.getString(1))) {
-                        throw new SQLException("Applied schema migration V" + migration.version() + " checksum differs");
-                    }
-                    return;
-                }
-            }
+        if (alreadyApplied(connection, migration, checksum)) {
+            return;
         }
         for (String command : statements(sql)) {
             try (Statement statement = connection.createStatement()) { statement.execute(command); }
@@ -83,6 +83,23 @@ final class JdbcSchemaInitializer {
             insert.setString(3, checksum);
             insert.setString(4, Instant.now().toString());
             insert.executeUpdate();
+        }
+    }
+
+    private static boolean alreadyApplied(Connection connection, Migration migration, String checksum)
+            throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement(
+                "select checksum from jworkflow_schema_history where version = ?")) {
+            query.setInt(1, migration.version());
+            try (ResultSet rows = query.executeQuery()) {
+                if (!rows.next()) {
+                    return false;
+                }
+                if (!checksum.equals(rows.getString(1))) {
+                    throw new SQLException("Applied schema migration V" + migration.version() + " checksum differs");
+                }
+                return true;
+            }
         }
     }
 
@@ -99,7 +116,7 @@ final class JdbcSchemaInitializer {
         }
     }
 
-    private static String sha256(String value) throws Exception {
+    private static String sha256(String value) throws NoSuchAlgorithmException {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                 .digest(value.getBytes(StandardCharsets.UTF_8)));
     }

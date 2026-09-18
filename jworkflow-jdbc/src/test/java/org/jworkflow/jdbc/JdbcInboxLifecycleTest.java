@@ -69,4 +69,8 @@ public final class JdbcInboxLifecycleTest {
     private static Fixture fixture(String name,int max)throws Exception{return new Fixture("jdbc:sqlite:"+Files.createTempFile("jworkflow-inbox-"+name+"-",".sqlite").toAbsolutePath(),new MutableClock(Instant.parse("2026-01-01T00:00:00Z")),max);}private record Fixture(String url,MutableClock clock,int maxAttempts){}
     private static final class MutableClock extends Clock{private Instant now;MutableClock(Instant now){this.now=now;}void advance(Duration d){now=now.plus(d);}@Override public ZoneId getZone(){return ZoneOffset.UTC;}@Override public Clock withZone(ZoneId zone){return this;}@Override public Instant instant(){return now;}}
     private static void check(boolean condition,String message){if(!condition)throw new AssertionError(message);}
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

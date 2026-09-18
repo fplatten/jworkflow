@@ -1,11 +1,5 @@
 package org.jworkflow.model;
 
-import org.jworkflow.definition.*;
-import org.jworkflow.dsl.*;
-import org.jworkflow.engine.*;
-import org.jworkflow.events.*;
-import org.jworkflow.model.*;
-import org.jworkflow.persistence.*;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -91,7 +85,17 @@ public final class DefinitionValidator {
                         node.name()));
             }
         }
+        validateStructuredNode(node, nodes, errors);
+        if (node.type() == WorkflowNodeType.GATEWAY && node.transitions().isEmpty()) {
+            errors.add(error("gateway.transitions.required", "Gateway must declare at least one route", node.name()));
+        }
+    }
 
+    private static void validateStructuredNode(
+            WorkflowNode node,
+            Map<String, WorkflowNode> nodes,
+            ArrayList<DefinitionValidationError> errors
+    ) {
         if (node.subWorkflow() != null) {
             validateOptionalTarget("subworkflow.success.target", node.subWorkflow().successTargetNode(), nodes, node.name(), errors);
             validateOptionalTarget("subworkflow.failure.target", node.subWorkflow().failureTargetNode(), nodes, node.name(), errors);
@@ -100,6 +104,21 @@ public final class DefinitionValidator {
             validateOptionalTarget("loop.step.target", node.loop().stepNode(), nodes, node.name(), errors);
             validateOptionalTarget("loop.next.target", node.loop().nextNode(), nodes, node.name(), errors);
         }
+        validateFork(node, nodes, errors);
+        validateJoin(node, nodes, errors);
+        if (node.waitDefinition() != null) {
+            validateOptionalTarget("wait.next.target", node.waitDefinition().targetNode(), nodes, node.name(), errors);
+        }
+        if (node.timeout() != null) {
+            validateOptionalTarget("timeout.target", node.timeout().targetNode(), nodes, node.name(), errors);
+        }
+    }
+
+    private static void validateFork(
+            WorkflowNode node,
+            Map<String, WorkflowNode> nodes,
+            ArrayList<DefinitionValidationError> errors
+    ) {
         if (node.fork() != null) {
             validateOptionalTarget("fork.join.target", node.fork().joinNode(), nodes, node.name(), errors);
             for (String branchTarget : node.fork().branches().values()) {
@@ -117,20 +136,18 @@ public final class DefinitionValidator {
                 }
             }
         }
+    }
+
+    private static void validateJoin(
+            WorkflowNode node,
+            Map<String, WorkflowNode> nodes,
+            ArrayList<DefinitionValidationError> errors
+    ) {
         if (node.join() != null) {
             validateOptionalTarget("join.next.target", node.join().nextNode(), nodes, node.name(), errors);
             if (node.join().requiredBranches().isEmpty()) {
                 errors.add(error("join.branches.required", "Join must require at least one branch", node.name()));
             }
-        }
-        if (node.waitDefinition() != null) {
-            validateOptionalTarget("wait.next.target", node.waitDefinition().targetNode(), nodes, node.name(), errors);
-        }
-        if (node.timeout() != null) {
-            validateOptionalTarget("timeout.target", node.timeout().targetNode(), nodes, node.name(), errors);
-        }
-        if (node.type() == WorkflowNodeType.GATEWAY && node.transitions().isEmpty()) {
-            errors.add(error("gateway.transitions.required", "Gateway must declare at least one route", node.name()));
         }
     }
 
@@ -140,31 +157,31 @@ public final class DefinitionValidator {
         pending.add(start);
         while (!pending.isEmpty()) {
             String name = pending.remove(pending.size() - 1);
-            if (!reachable.add(name)) {
-                continue;
-            }
             WorkflowNode node = nodes.get(name);
-            if (node == null) {
-                continue;
-            }
-            node.transitions().forEach(transition -> pending.add(transition.targetNode()));
-            if (node.waitDefinition() != null) pending.add(node.waitDefinition().targetNode());
-            if (node.timeout() != null && node.timeout().targetNode() != null) pending.add(node.timeout().targetNode());
-            if (node.loop() != null) {
-                pending.add(node.loop().stepNode());
-                pending.add(node.loop().nextNode());
-            }
-            if (node.fork() != null) {
-                pending.addAll(node.fork().branches().values());
-                pending.add(node.fork().joinNode());
-            }
-            if (node.join() != null) pending.add(node.join().nextNode());
-            if (node.subWorkflow() != null) {
-                pending.add(node.subWorkflow().successTargetNode());
-                pending.add(node.subWorkflow().failureTargetNode());
+            if (reachable.add(name) && node != null) {
+                addReachableTargets(node, pending);
             }
         }
         return reachable;
+    }
+
+    private static void addReachableTargets(WorkflowNode node, ArrayList<String> pending) {
+        node.transitions().forEach(transition -> pending.add(transition.targetNode()));
+        if (node.waitDefinition() != null) pending.add(node.waitDefinition().targetNode());
+        if (node.timeout() != null && node.timeout().targetNode() != null) pending.add(node.timeout().targetNode());
+        if (node.loop() != null) {
+            pending.add(node.loop().stepNode());
+            pending.add(node.loop().nextNode());
+        }
+        if (node.fork() != null) {
+            pending.addAll(node.fork().branches().values());
+            pending.add(node.fork().joinNode());
+        }
+        if (node.join() != null) pending.add(node.join().nextNode());
+        if (node.subWorkflow() != null) {
+            pending.add(node.subWorkflow().successTargetNode());
+            pending.add(node.subWorkflow().failureTargetNode());
+        }
     }
 
     private static void validateOptionalTarget(

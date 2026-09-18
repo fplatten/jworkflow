@@ -38,10 +38,12 @@ public final class WorkflowEngineBuilderTest {
         workflowDefinitionsRequireUniqueNameAndVersionAndSupportSubWorkflowReferences();
         workflowDefinitionValidatorFindsActionableErrors();
         groovyDslCompilerBuildsDefinitionModel();
+        groovyDslCompilerBuildsListenerWaitAndPredicateForms();
         groovyDslCompilerRejectsUnsafeConstructs();
         groovyDslCompilerRejectsMaliciousAstShapesWithoutExecution();
         groovyDslCompilerEnforcesResourceLimitsAndSourceLocations();
         branchConditionEvaluatorSupportsComparisonsAndPredicates();
+        builderConfigurationCoversSupportedSettings();
         inMemoryEngineStartsRegisteredDefinitionAtStartNode();
         builderLoadsDefinitionsFromSource();
         inMemoryEnginePublishesWorkflowStartedEvent();
@@ -529,6 +531,54 @@ public final class WorkflowEngineBuilderTest {
         }
     }
 
+    private static void groovyDslCompilerBuildsListenerWaitAndPredicateForms() {
+        String dsl = """
+                workflow("edge-forms") {
+                    version "2.0"
+                    correlateBy "customerId"
+                    start when: "customer.created"
+                    step("notify") {
+                        on "notification.requested"
+                        action "notification.send"
+                        retry maxAttempts: 3, backoff: "PT1S"
+                        timeout "PT2S"
+                        sla "PT1S", onBreach: "warn"
+                        run { event, context ->
+                            context.listener("audit").record(["Ada", true, 2, null])
+                        }
+                        onSuccess goTo: "approval"
+                        onFailure goTo: "failed"
+                    }
+                    waitFor("approval") {
+                        event "approval.received"
+                        correlateBy "customerId"
+                        timeout "PT5S", goTo: "failed"
+                        then goTo: "route"
+                    }
+                    gateway("route", type: "inclusive") {
+                        when predicate: "eligible", arguments: [minimum: 18, regions: ["US", "CA"]], goTo: "done"
+                        otherwise goTo: "failed"
+                    }
+                    end("done")
+                    end("failed")
+                }
+                """;
+        WorkflowDefinition definition = new GroovyWorkflowDslCompiler()
+                .compile(new WorkflowDefinitionText("edge-forms.groovy", dsl));
+        WorkflowNode notify = definition.nodes().get("notify");
+        if (notify.listenerInvocation() == null || notify.retryPolicy() == null || notify.timeout() == null) {
+            throw new AssertionError("Expected listener, retry, and timeout declarations");
+        }
+        Object literal = ((ListenerArgument.Literal) notify.listenerInvocation().arguments().get(0)).value();
+        if (!(literal instanceof List<?> list) || !"Ada".equals(list.get(0))) {
+            throw new AssertionError("Expected listener list literal metadata");
+        }
+        if (definition.nodes().get("approval").waitDefinition() == null
+                || definition.nodes().get("route").transitions().get(0).condition().predicate() == null) {
+            throw new AssertionError("Expected wait and predicate forms");
+        }
+    }
+
     private static void assertDslRejected(String source, String location) {
         try {
             new GroovyWorkflowDslCompiler().compile(new WorkflowDefinitionText(location, source));
@@ -562,6 +612,24 @@ public final class WorkflowEngineBuilderTest {
         } catch (WorkflowValidationException expected) {
             // Expected.
         }
+        Map<String, Object> values = Map.of("number", 10, "text", "beta", "present", true);
+        assertCondition(evaluator, new BranchCondition("number", "eq", 10, null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("number", "ne", 11, null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("number", "neq", 10, null, Map.of()), values, false);
+        assertCondition(evaluator, new BranchCondition("number", "gt", 9, null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("number", "gte", 10, null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("number", "lt", 11, null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("number", "lte", 10, null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("text", "gt", "alpha", null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("present", "present", null, null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("missing", "absent", null, null, Map.of()), values, true);
+        assertCondition(evaluator, new BranchCondition("missing", "present", null, null, Map.of()), null, false);
+        expectWorkflowValidation(() -> evaluator.evaluate(
+                new BranchCondition(null, null, null, "unknown", Map.of()), values));
+        expectWorkflowValidation(() -> evaluator.evaluate(
+                new BranchCondition("number", "gt", "not-a-number", null, Map.of()), values));
+        expectIllegalArgument(() -> new BranchCondition(null, null, null, null, null));
+        expectIllegalArgument(() -> evaluator.registerPredicate(" ", (variables, arguments) -> true));
     }
 
     private static void inMemoryEngineStartsRegisteredDefinitionAtStartNode() throws Exception {
@@ -1178,6 +1246,89 @@ public final class WorkflowEngineBuilderTest {
         }
     }
 
+    private static void assertCondition(BranchConditionEvaluator evaluator, BranchCondition condition,
+            Map<String, Object> variables, boolean expected) {
+        if (evaluator.evaluate(condition, variables) != expected) {
+            throw new AssertionError("Unexpected branch result for " + condition.operator());
+        }
+    }
+
+    private static void expectWorkflowValidation(Runnable operation) {
+        try {
+            operation.run();
+            throw new AssertionError("Expected workflow validation failure");
+        } catch (WorkflowValidationException expected) {
+            // expected
+        }
+    }
+
+    private static void builderConfigurationCoversSupportedSettings() {
+        WorkflowEngineBuilder builder = WorkflowEngine.builder()
+                .clock(java.time.Clock.systemUTC())
+                .timerPolling(false)
+                .timerPollIntervalMillis(10)
+                .recoveryLeaseMillis(100)
+                .timerBatchSize(1)
+                .timerRetryDelayMillis(10)
+                .startupValidationBatchSize(1)
+                .eventRoutingMaximumCandidates(1)
+                .lazyDefinitionValidation(true)
+                .inboxPollingMillis(10)
+                .inboxClaimLeaseMillis(100)
+                .inboxBatchSize(1)
+                .inboxRetry(1, 10, 10)
+                .outboxPollingMillis(10)
+                .outboxClaimLeaseMillis(100)
+                .outboxBatchSize(1)
+                .outboxRetry(1, 10, 10)
+                .username("user")
+                .password("password")
+                .initialize(false)
+                .sqliteBusyTimeoutMillis(0)
+                .sqliteWalEnabled(false)
+                .dslCompilerOptions(DslCompilerOptions.DEFAULT)
+                .eventPublisher(NoOpEventPublisher.INSTANCE)
+                .eventCapturePolicy(org.jworkflow.security.CaptureAllEventPolicy.INSTANCE)
+                .listener(new Object())
+                .listener("listener", new Object())
+                .stepHandler("action", context -> StepResult.success())
+                .startWorkflowOn("order.created", "orders")
+                .branchPredicate("always", (variables, arguments) -> true)
+                .setting("custom", "value");
+
+        Properties properties = new Properties();
+        properties.setProperty("jworkflow.engine.type", "in-memory");
+        properties.setProperty("jworkflow.jdbc.username", "configured-user");
+        properties.setProperty("jworkflow.jdbc.password", "configured-password");
+        properties.setProperty("jworkflow.schema.initialize", "false");
+        properties.setProperty("jworkflow.sqlite.busy-timeout-ms", "1");
+        properties.setProperty("jworkflow.sqlite.wal-enabled", "true");
+        properties.setProperty("jworkflow.setting.routing.maximum-candidates", "20");
+        builder.properties(properties);
+
+        WorkflowEngineProperties typed = new WorkflowEngineProperties(
+                WorkflowEngine.Type.IN_MEMORY, null, null, null, null, null, false, Map.of("typed", "true"));
+        builder.properties(typed);
+
+        expectIllegalArgument(() -> WorkflowEngine.builder().timerPollIntervalMillis(9));
+        expectIllegalArgument(() -> WorkflowEngine.builder().timerPollIntervalMillis(60_001));
+        expectIllegalArgument(() -> WorkflowEngine.builder().recoveryLeaseMillis(99));
+        expectIllegalArgument(() -> WorkflowEngine.builder().recoveryLeaseMillis(3_600_001));
+        expectIllegalArgument(() -> WorkflowEngine.builder().timerRetryDelayMillis(9));
+        expectIllegalArgument(() -> WorkflowEngine.builder().startupValidationBatchSize(10_001));
+        expectIllegalArgument(() -> WorkflowEngine.builder().eventRoutingMaximumCandidates(0));
+        expectIllegalArgument(() -> WorkflowEngine.builder().inboxPollingMillis(60_001));
+        expectIllegalArgument(() -> WorkflowEngine.builder().inboxBatchSize(0));
+        expectIllegalArgument(() -> WorkflowEngine.builder().inboxRetry(101, 10, 10));
+        expectIllegalArgument(() -> WorkflowEngine.builder().outboxPollingMillis(9));
+        expectIllegalArgument(() -> WorkflowEngine.builder().outboxClaimLeaseMillis(3_600_001));
+        expectIllegalArgument(() -> WorkflowEngine.builder().sqliteBusyTimeoutMillis(-1));
+        expectIllegalArgument(() -> WorkflowEngine.builder().stepHandler(" ", context -> StepResult.success()));
+        expectIllegalArgument(() -> WorkflowEngine.builder().startWorkflowOn(" ", "orders"));
+        expectIllegalArgument(() -> WorkflowEngine.builder().startWorkflowOn("order.created", " "));
+        expectIllegalArgument(() -> WorkflowEngine.builder().listener(" ", new Object()));
+    }
+
     private static void jdbcConfigurationRequiresExplicitDurableMode() throws Exception {
         try {
             WorkflowEngine.builder().jdbcUrl("jdbc:sqlite::memory:").build();
@@ -1571,5 +1722,9 @@ public final class WorkflowEngineBuilderTest {
             return 0D;
         }
         return null;
+    }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
     }
 }

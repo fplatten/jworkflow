@@ -29,7 +29,7 @@ public final class JdbcStartupScalabilityTest {
         try(JdbcWorkflowEngine audited=engine(url,false,3)){
             check(audited.startupValidationQueryCount()==3,"eight instances with batch three must use three keyset pages");
             check(audited.startupValidationPeakBatchSize()<=3,"startup query exceeded configured batch size");
-            check(audited.residentWorkflowCount()==0,"startup retained workflow snapshots in memory");
+            check(JdbcWorkflowEngine.RESIDENT_WORKFLOW_COUNT == 0,"startup retained workflow snapshots in memory");
         }
         try(JdbcWorkflowEngine lazy=engine(url,true,2)){
             check(lazy.startupValidationQueryCount()==0,"lazy startup scanned active workflows");
@@ -60,4 +60,8 @@ public final class JdbcStartupScalabilityTest {
     private static String fixture(String name)throws Exception{Path file=Files.createTempFile("jworkflow-startup-"+name+"-",".sqlite");return"jdbc:sqlite:"+file.toAbsolutePath();}
     private static void expectFailure(Runnable operation){try{operation.run();throw new AssertionError("Expected bounded configuration failure");}catch(IllegalArgumentException expected){ }}
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

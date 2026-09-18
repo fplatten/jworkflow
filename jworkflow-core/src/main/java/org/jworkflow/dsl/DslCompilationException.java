@@ -3,7 +3,7 @@ package org.jworkflow.dsl;
 import java.util.List;
 
 public final class DslCompilationException extends RuntimeException {
-    private final List<DslDiagnostic> diagnostics;
+    private final transient List<DslDiagnostic> diagnostics;
 
     public DslCompilationException(List<DslDiagnostic> diagnostics) {
         super(message(diagnostics));

@@ -22,4 +22,8 @@ public final class OrderFulfillmentExampleTest {
             throw new AssertionError("Expected shipment creation result variable");
         }
     }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

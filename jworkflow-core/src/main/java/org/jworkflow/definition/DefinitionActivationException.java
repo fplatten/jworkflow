@@ -1,7 +1,7 @@
 package org.jworkflow.definition;
 
 public final class DefinitionActivationException extends RuntimeException {
-    private final DefinitionActivationResult result;
+    private final transient DefinitionActivationResult result;
 
     public DefinitionActivationException(DefinitionActivationResult result, Throwable cause) {
         super("Workflow definition activation rejected for " + result.source().location() + ": "

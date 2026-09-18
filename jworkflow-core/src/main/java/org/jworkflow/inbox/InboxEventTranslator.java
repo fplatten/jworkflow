@@ -5,5 +5,5 @@ import java.util.List;
 
 @FunctionalInterface
 public interface InboxEventTranslator {
-    List<? extends Command> translate(InboxMessage message);
+    List<Command> translate(InboxMessage message);
 }

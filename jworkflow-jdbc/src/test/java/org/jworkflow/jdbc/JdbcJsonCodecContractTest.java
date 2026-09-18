@@ -78,6 +78,18 @@ public final class JdbcJsonCodecContractTest {
     private static void legacyValuesAreHandledHonestly(JdbcJsonCodec codec) {
         check(codec.readPersistedMap("{}").isEmpty(), "legacy empty map is unambiguous");
         expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("{customer=Ada, amount=12.50}"));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("a =value"));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("A=value"));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("0=value"));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("_=value"));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("-=value"));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("="));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("plain text"));
+        check("wrong".equals(codec.readPersistedMap(
+                "{\"format\":\"wrong\",\"version\":1,\"value\":{}}").get("format")),
+                "ordinary legacy JSON objects must remain readable");
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("{\"format\":\"jworkflow-json\",\"version\":2,\"value\":{}}"));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("{\"format\":\"jworkflow-json\",\"version\":1}"));
     }
 
     private static void check(boolean condition, String message) {
@@ -91,5 +103,9 @@ public final class JdbcJsonCodecContractTest {
         } catch (Throwable failure) {
             if (!type.isInstance(failure)) throw failure;
         }
+    }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
     }
 }

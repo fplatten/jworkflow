@@ -14,12 +14,13 @@ import java.time.Instant;
 import java.util.Map;
 
 final class OrderWorkflowEventMapper {
+    private static final String TEXT_ORDER_ID = "orderId";
     Order toOrder(WorkflowEvent event) {
         Object value = event.message().payload() instanceof Map<?, ?> payload
-                ? payload.get("orderId")
+                ? payload.get(TEXT_ORDER_ID)
                 : null;
         if (value == null) {
-            value = event.metadata().headers().get("orderId");
+            value = event.metadata().headers().get(TEXT_ORDER_ID);
         }
         if (value == null) {
             throw new IllegalArgumentException("orderId is required");
@@ -28,24 +29,24 @@ final class OrderWorkflowEventMapper {
     }
 
     WorkflowEvent toEvent(OrderCreatedResult result) {
-        return correlatedEvent(OrderEvents.ORDER_CREATED, result.orderId(), Map.of("orderId", result.orderId()));
+        return correlatedEvent(OrderEvents.ORDER_CREATED, result.orderId(), Map.of(TEXT_ORDER_ID, result.orderId()));
     }
 
     WorkflowEvent toEvent(InventoryReservationResult result) {
         return event(OrderEvents.INVENTORY_RESERVED, Map.of(
-                "orderId", result.orderId(),
+                TEXT_ORDER_ID, result.orderId(),
                 "inventoryReserved", result.reserved()));
     }
 
     WorkflowEvent toEvent(PaymentChargeResult result) {
         return event(OrderEvents.PAYMENT_CHARGED, Map.of(
-                "orderId", result.orderId(),
+                TEXT_ORDER_ID, result.orderId(),
                 "paymentCharged", result.charged()));
     }
 
     WorkflowEvent toEvent(ShipmentCreationResult result) {
         return event(OrderEvents.SHIPMENT_CREATED, Map.of(
-                "orderId", result.orderId(),
+                TEXT_ORDER_ID, result.orderId(),
                 "shipmentCreated", result.created()));
     }
 
@@ -73,7 +74,7 @@ final class OrderWorkflowEventMapper {
                         "1",
                         now,
                         now,
-                        Map.of("orderId", orderId)),
+                        Map.of(TEXT_ORDER_ID, orderId)),
                 EventMessage.json(payload));
     }
 }

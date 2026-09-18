@@ -2,7 +2,6 @@ package org.jworkflow.engine;
 
 import org.jworkflow.definition.*;
 import org.jworkflow.dsl.*;
-import org.jworkflow.engine.*;
 import org.jworkflow.events.*;
 import org.jworkflow.model.*;
 import org.jworkflow.persistence.*;
@@ -369,6 +368,7 @@ public final class WorkflowEngineBuilder {
         return engine;
     }
 
+    @SuppressWarnings("java:S107") // Reflection bridges the optional JDBC module without a core dependency.
     private static WorkflowEngine createJdbcEngine(
             WorkflowEngineProperties properties,
             WorkflowDefinitionRegistry definitions,

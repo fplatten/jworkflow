@@ -284,7 +284,7 @@ public final class CoreRuntimeContractTest {
         Instant deadline = Instant.now().plusSeconds(5);
         while (Instant.now().isBefore(deadline)) {
             if (condition.get()) return;
-            Thread.sleep(10L);
+            java.util.concurrent.locks.LockSupport.parkNanos(Duration.ofMillis(10).toNanos());
         }
         throw new AssertionError("Timed out waiting for condition");
     }
@@ -368,5 +368,9 @@ public final class CoreRuntimeContractTest {
         @Override public WorkflowTransactionManager transactions() {
             return transaction -> { transactions.incrementAndGet(); transaction.execute(); };
         }
+    }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
     }
 }

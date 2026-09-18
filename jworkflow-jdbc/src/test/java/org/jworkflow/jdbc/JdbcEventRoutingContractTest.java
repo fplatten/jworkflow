@@ -100,4 +100,8 @@ public final class JdbcEventRoutingContractTest {
     private static Fixture fixture(String name)throws Exception{Path file=Files.createTempFile("jworkflow-routing-"+name+"-",".sqlite");return new Fixture("jdbc:sqlite:"+file.toAbsolutePath());}
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
     private record Fixture(String url){ }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

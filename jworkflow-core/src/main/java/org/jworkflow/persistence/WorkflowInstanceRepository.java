@@ -1,11 +1,6 @@
 package org.jworkflow.persistence;
 
-import org.jworkflow.definition.*;
-import org.jworkflow.dsl.*;
-import org.jworkflow.engine.*;
-import org.jworkflow.events.*;
 import org.jworkflow.model.*;
-import org.jworkflow.persistence.*;
 
 import java.util.List;
 import java.util.Optional;
@@ -64,15 +59,13 @@ public interface WorkflowInstanceRepository {
         return findActive(limit).stream().filter(snapshot -> !snapshot.updatedAt().isAfter(updatedBefore)).toList();
     }
 
-    /** Transitional alias for source compatibility. New code should use insert/update explicitly. */
-    @Deprecated
+    /** Compatibility alias for source compatibility. New code should use insert/update explicitly. */
     default void save(WorkflowSnapshot snapshot) {
         if (snapshot.lockVersion() == 0) insert(snapshot);
         else update(snapshot, snapshot.lockVersion() - 1);
     }
 
-    /** Transitional alias for source compatibility. */
-    @Deprecated
+    /** Compatibility alias for source compatibility. */
     default Optional<WorkflowSnapshot> find(WorkflowInstanceId instanceId) { return findById(instanceId); }
 
     private static boolean active(WorkflowSnapshot snapshot) {

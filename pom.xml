@@ -53,6 +53,14 @@
         <liquibase.version>4.29.2</liquibase.version>
         <junit.version>5.10.3</junit.version>
         <surefire.version>3.3.0</surefire.version>
+        <sonar.maven.version>5.8.0.7211</sonar.maven.version>
+        <sonar.projectKey>jworkflow</sonar.projectKey>
+        <sonar.projectName>jworkflow</sonar.projectName>
+        <sonar.host.url>http://localhost:9000</sonar.host.url>
+        <sonar.sources>src/main/java</sonar.sources>
+        <sonar.tests>src/test/java</sonar.tests>
+        <sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>
+        <sonar.coverage.jacoco.xmlReportPaths>${maven.multiModuleProjectDirectory}/jworkflow-example/target/site/jacoco-aggregate/jacoco.xml,${maven.multiModuleProjectDirectory}/jworkflow-example/target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
     </properties>
 
     <dependencyManagement>
@@ -97,6 +105,13 @@
     </dependencyManagement>
 
     <build>
+        <plugins>
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>${sonar.maven.version}</version>
+            </plugin>
+        </plugins>
         <pluginManagement>
             <plugins>
                 <plugin>

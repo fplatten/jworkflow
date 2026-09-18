@@ -20,6 +20,8 @@ import java.util.Map;
 
 /** Deterministic, versioned JSON codec shared by all JDBC repositories. */
 public final class JdbcJsonCodec {
+    private static final String TEXT_FORMAT = "format";
+    private static final String TEXT_VALUE = "value";
     public static final String FORMAT = "jworkflow-json";
     public static final int VERSION = 1;
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
@@ -38,8 +40,8 @@ public final class JdbcJsonCodec {
     public String write(Object value) {
         Object safe = validateAndCopy(value, "$", true);
         LinkedHashMap<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("format", FORMAT);
-        envelope.put("value", safe);
+        envelope.put(TEXT_FORMAT, FORMAT);
+        envelope.put(TEXT_VALUE, safe);
         envelope.put("version", VERSION);
         try {
             return mapper.writeValueAsString(envelope);
@@ -54,7 +56,7 @@ public final class JdbcJsonCodec {
 
     public Object read(String json) {
         Map<String, Object> envelope = parseEnvelope(json);
-        return immutableJson(envelope.get("value"));
+        return immutableJson(envelope.get(TEXT_VALUE));
     }
 
     @SuppressWarnings("unchecked")
@@ -74,7 +76,7 @@ public final class JdbcJsonCodec {
         }
         try {
             Map<String, Object> parsed = mapper.readValue(trimmed, MAP_TYPE);
-            if (FORMAT.equals(parsed.get("format"))) return readMap(trimmed);
+            if (FORMAT.equals(parsed.get(TEXT_FORMAT))) return readMap(trimmed);
             if (looksLikeLegacyMapToString(trimmed)) throw legacyFormat();
             return castStringMap(immutableJson(parsed));
         } catch (JsonProcessingException exception) {
@@ -83,7 +85,7 @@ public final class JdbcJsonCodec {
     }
 
     public <T> T read(String json, Class<T> type) {
-        Object value = parseEnvelope(json).get("value");
+        Object value = parseEnvelope(json).get(TEXT_VALUE);
         try {
             return mapper.convertValue(value, type);
         } catch (IllegalArgumentException exception) {
@@ -100,14 +102,14 @@ public final class JdbcJsonCodec {
         if (json == null || json.isBlank()) throw new PersistenceSerializationException("Persisted JSON is required");
         try {
             Map<String, Object> envelope = mapper.readValue(json, MAP_TYPE);
-            if (!FORMAT.equals(envelope.get("format"))) {
+            if (!FORMAT.equals(envelope.get(TEXT_FORMAT))) {
                 throw new PersistenceSerializationException("Unsupported persisted JSON format");
             }
             Object version = envelope.get("version");
             if (!(version instanceof Number number) || number.intValue() != VERSION) {
                 throw new PersistenceSerializationException("Unsupported persisted JSON version: " + version);
             }
-            if (!envelope.containsKey("value")) throw new PersistenceSerializationException("Persisted JSON value is missing");
+            if (!envelope.containsKey(TEXT_VALUE)) throw new PersistenceSerializationException("Persisted JSON value is missing");
             return envelope;
         } catch (JsonProcessingException exception) {
             throw new PersistenceSerializationException("Invalid persisted JSON", exception);
@@ -115,10 +117,7 @@ public final class JdbcJsonCodec {
     }
 
     private Object validateAndCopy(Object value, String path, boolean allowTemporal) {
-        if (value == null || value instanceof String || value instanceof Boolean
-                || value instanceof Byte || value instanceof Short || value instanceof Integer
-                || value instanceof Long || value instanceof java.math.BigInteger
-                || value instanceof Float || value instanceof Double || value instanceof java.math.BigDecimal) return value;
+        if (isJsonScalar(value)) return value;
         if (allowTemporal && value instanceof TemporalAccessor) return value;
         if (value instanceof byte[]) {
             throw new PersistenceSerializationException("Binary value at " + path + " must be stored in a BLOB column");
@@ -142,6 +141,10 @@ public final class JdbcJsonCodec {
         throw new PersistenceSerializationException("Unsupported persisted value at " + path + ": " + value.getClass().getName());
     }
 
+    private static boolean isJsonScalar(Object value) {
+        return value == null || value instanceof String || value instanceof Boolean || value instanceof Number;
+    }
+
     private Object immutableJson(Object value) {
         if (value instanceof Map<?, ?> map) {
             LinkedHashMap<String, Object> result = new LinkedHashMap<>();
@@ -162,7 +165,24 @@ public final class JdbcJsonCodec {
     }
 
     private static boolean looksLikeLegacyMapToString(String value) {
-        return value.matches(".*[A-Za-z0-9_]+\\s*=.*");
+        for (int equalsIndex = value.indexOf('='); equalsIndex >= 0;
+                equalsIndex = value.indexOf('=', equalsIndex + 1)) {
+            int candidateIndex = equalsIndex - 1;
+            while (candidateIndex >= 0 && Character.isWhitespace(value.charAt(candidateIndex))) {
+                candidateIndex--;
+            }
+            if (candidateIndex >= 0 && isAsciiWordCharacter(value.charAt(candidateIndex))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAsciiWordCharacter(char character) {
+        return character >= 'a' && character <= 'z'
+                || character >= 'A' && character <= 'Z'
+                || character >= '0' && character <= '9'
+                || character == '_';
     }
 
     private static PersistenceSerializationException legacyFormat() {

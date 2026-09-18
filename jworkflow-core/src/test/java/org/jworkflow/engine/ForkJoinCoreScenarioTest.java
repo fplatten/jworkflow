@@ -192,4 +192,8 @@ public final class ForkJoinCoreScenarioTest {
 
     @FunctionalInterface
     private interface Check { boolean satisfied() throws Exception; }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

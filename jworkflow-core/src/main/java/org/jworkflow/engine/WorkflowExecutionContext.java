@@ -6,39 +6,23 @@ import org.jworkflow.model.WorkflowInstanceId;
 import java.util.Objects;
 import java.util.Optional;
 
-public final class WorkflowExecutionContext {
+public record WorkflowExecutionContext(
+        WorkflowInstanceId workflowInstanceId,
+        String workflowName,
+        String workflowVersion,
+        String stepName,
+        WorkflowEvent event,
+        String correlationId,
+        String businessKey,
+        String causationId,
+        String traceId) {
     private static final ThreadLocal<WorkflowExecutionContext> CURRENT = new ThreadLocal<>();
 
-    private final WorkflowInstanceId workflowInstanceId;
-    private final String workflowName;
-    private final String workflowVersion;
-    private final String stepName;
-    private final WorkflowEvent event;
-    private final String correlationId;
-    private final String businessKey;
-    private final String causationId;
-    private final String traceId;
-
-    public WorkflowExecutionContext(
-            WorkflowInstanceId workflowInstanceId,
-            String workflowName,
-            String workflowVersion,
-            String stepName,
-            WorkflowEvent event,
-            String correlationId,
-            String businessKey,
-            String causationId,
-            String traceId
-    ) {
-        this.workflowInstanceId = Objects.requireNonNull(workflowInstanceId, "workflowInstanceId");
-        this.workflowName = Objects.requireNonNull(workflowName, "workflowName");
-        this.workflowVersion = workflowVersion;
-        this.stepName = Objects.requireNonNull(stepName, "stepName");
-        this.event = event;
-        this.correlationId = correlationId;
-        this.businessKey = businessKey;
-        this.causationId = causationId;
-        this.traceId = traceId;
+    @SuppressWarnings("java:S107") // Record exposes the complete tracing identity by design.
+    public WorkflowExecutionContext {
+        Objects.requireNonNull(workflowInstanceId, "workflowInstanceId");
+        Objects.requireNonNull(workflowName, "workflowName");
+        Objects.requireNonNull(stepName, "stepName");
     }
 
     public static Optional<WorkflowExecutionContext> current() {
@@ -53,42 +37,6 @@ public final class WorkflowExecutionContext {
         WorkflowExecutionContext previous = CURRENT.get();
         CURRENT.set(Objects.requireNonNull(context, "context"));
         return new Scope(previous);
-    }
-
-    public WorkflowInstanceId workflowInstanceId() {
-        return workflowInstanceId;
-    }
-
-    public String workflowName() {
-        return workflowName;
-    }
-
-    public String workflowVersion() {
-        return workflowVersion;
-    }
-
-    public String stepName() {
-        return stepName;
-    }
-
-    public WorkflowEvent event() {
-        return event;
-    }
-
-    public String correlationId() {
-        return correlationId;
-    }
-
-    public String businessKey() {
-        return businessKey;
-    }
-
-    public String causationId() {
-        return causationId;
-    }
-
-    public String traceId() {
-        return traceId;
     }
 
     static final class Scope implements AutoCloseable {

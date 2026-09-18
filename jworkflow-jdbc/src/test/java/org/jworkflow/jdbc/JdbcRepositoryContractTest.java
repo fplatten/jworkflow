@@ -121,4 +121,8 @@ public final class JdbcRepositoryContractTest {
     private static void check(boolean condition,String message){if(!condition)throw new AssertionError(message);}
     private static void expect(Class<? extends Throwable> type,Runnable work){try{work.run();throw new AssertionError("Expected "+type.getSimpleName());}catch(Throwable failure){if(!type.isInstance(failure))throw failure;}}
     private record Fixture(String url,JdbcWorkflowPersistence persistence,JdbcWorkflowPersistence second){}
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

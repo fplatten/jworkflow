@@ -76,4 +76,8 @@ public final class JdbcRecoveryContractTest {
     private static void check(boolean condition,String message){if(!condition)throw new AssertionError(message);}
     private record Fixture(String url,MutableClock clock){}
     private static final class MutableClock extends Clock{private Instant instant;private MutableClock(Instant instant){this.instant=instant;}void advance(Duration duration){instant=instant.plus(duration);}@Override public ZoneId getZone(){return ZoneOffset.UTC;}@Override public Clock withZone(ZoneId zone){return this;}@Override public Instant instant(){return instant;}}
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }

@@ -8,6 +8,7 @@ public final class WorkflowEventPublisher implements EventPublisher {
     public static final WorkflowEventPublisher INSTANCE = new WorkflowEventPublisher();
 
     public WorkflowEventPublisher() {
+        // Public for dependency-injection containers; the publisher has no instance state.
     }
 
     @Override

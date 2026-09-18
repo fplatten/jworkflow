@@ -139,4 +139,8 @@ public final class JavaDefinitionBuilderContractTest {
             throw new AssertionError(message);
         }
     }
+    @org.junit.jupiter.api.Test
+    void junitContract() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> main(new String[0]));
+    }
 }
