@@ -15,7 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java: ['17.0.10+7', '21.0.7+6']
+        # Match the exact version advertised by the Temurin API, including its LTS suffix.
+        java: ['17.0.10+7', '21.0.7+6.0.LTS']
         postgres:
           - version: '16.15'
             image: postgres@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
@@ -48,20 +49,22 @@ jobs:
           docker pull "$POSTGRES_IMAGE"
           mvn --version
       - name: Ordinary reactor contracts
+        id: ordinary
         run: mvn -B -ntp clean verify
       - name: Preserve ordinary reports
-        if: always()
+        if: ${{ always() && (steps.ordinary.outcome == 'success' || hashFiles('**/target/surefire-reports/**') != '') }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ordinary-pg${{ matrix.postgres.version }}-java${{ matrix.java }}
           path: '**/target/surefire-reports/**'
           if-no-files-found: error
       - name: PostgreSQL reactor contracts and restart example
+        id: postgres
         env:
           POSTGRES_IMAGE: ${{ matrix.postgres.image }}
         run: mvn -B -ntp -Ppostgres-it clean verify "-Dpostgres.image=$POSTGRES_IMAGE"
       - name: Preserve database reports
-        if: always()
+        if: ${{ always() && (steps.postgres.outcome == 'success' || (steps.postgres.outcome == 'failure' && hashFiles('**/target/failsafe-reports/**', '**/target/pg12-evidence/**', '**/target/surefire-reports/**') != '')) }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: postgres-pg${{ matrix.postgres.version }}-java${{ matrix.java }}
