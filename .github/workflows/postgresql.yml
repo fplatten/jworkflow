@@ -72,6 +72,9 @@ jobs:
             **/target/failsafe-reports/**
             **/target/pg12-evidence/**
             **/target/surefire-reports/**
+            **/target/site/jacoco*/**
           if-no-files-found: error
       - name: Require all executed contracts without skips
         run: python3 .github/scripts/verify-postgres-reports.py
+      - name: Require at least 80 percent coverage in every module
+        run: python3 .github/scripts/verify-coverage.py

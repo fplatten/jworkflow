@@ -14,7 +14,7 @@ import static org.jworkflow.jdbc.DuplicateRepositoryContract.*;
 
 class DuplicateRepositoryTest {
     @TempDir Path directory;
-    @Test void sqliteBinaryJsonAndEnvelopeDuplicatesValidateByStoredContent(){envelopeAndTypeConflicts(ports());}
+    @Test void sqliteBinaryJsonAndEnvelopeDuplicatesValidateByStoredContent(){assertDoesNotThrow(() -> envelopeAndTypeConflicts(ports()));}
 
     @Test void sqliteMatchingAndConflictingDuplicatesDirectAndNested() {
         for(Kind kind:Kind.values())for(boolean nested:List.of(false,true)) {
@@ -53,7 +53,8 @@ class DuplicateRepositoryTest {
             try(Connection connection=DriverManager.getConnection(url);Statement statement=connection.createStatement()) {
                 statement.execute("alter table workflow_inbox add column guard integer "+constraint);
             }
-            assertThrows(WorkflowInfrastructureException.class,()->ports.jdbcTransactions().inWriteTransaction(()->save(ports,sample(Kind.INBOX,"invalid"))));
+            var transactionManager = ports.jdbcTransactions();
+            assertThrows(WorkflowInfrastructureException.class,()->transactionManager.inWriteTransaction(()->save(ports,sample(Kind.INBOX,"invalid"))));
             try(Connection connection=DriverManager.getConnection(url);Statement statement=connection.createStatement();ResultSet rows=statement.executeQuery("select count(*) from workflow_inbox")){
                 assertTrue(rows.next());assertEquals(0,rows.getInt(1));
             }

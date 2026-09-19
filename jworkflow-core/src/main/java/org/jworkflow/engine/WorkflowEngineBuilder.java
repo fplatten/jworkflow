@@ -26,6 +26,7 @@ import java.time.Clock;
 public final class WorkflowEngineBuilder {
     /** Creates an in-memory engine configuration with schema initialization disabled. */
     public WorkflowEngineBuilder() {
+        // Default construction requires no additional setup.
     }
 
     private WorkflowEngine.Type type = WorkflowEngine.Type.IN_MEMORY;

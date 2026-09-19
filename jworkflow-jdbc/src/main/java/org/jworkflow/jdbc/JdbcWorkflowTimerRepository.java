@@ -79,7 +79,7 @@ final class JdbcWorkflowTimerRepository implements WorkflowTimerRepository {
      * {@inheritDoc}
      */
     @Override public List<WorkflowTimer> claimDue(Instant now,String owner,Instant until,int limit){
-        return JdbcLeaseSupport.claim(connections,JdbcLeaseSupport.Queue.TIMER,COLUMNS,this::map,now,owner,until,limit);
+        return JdbcLeaseSupport.claim(connections,JdbcLeaseSupport.Queue.TIMER,COLUMNS,this::map,new JdbcLeaseSupport.ClaimRequest(now,owner,until,limit));
     }
     /**
      * {@inheritDoc}
@@ -223,10 +223,6 @@ final class JdbcWorkflowTimerRepository implements WorkflowTimerRepository {
         s.setString(15,t.claimToken());
     }
     private static void one(PreparedStatement s,UUID id,String action)throws SQLException{if(s.executeUpdate()!=1)throw new PersistenceConstraintException("Guard rejected "+action+" for "+id);
-    }
-    private static void requireOwner(String owner,Instant until,Instant now,int limit){if(owner==null||owner.isBlank())throw new IllegalArgumentException("ownerId is required");
-        if(until==null||!until.isAfter(now))throw new IllegalArgumentException("claimUntil must be after now");
-        if(limit<1)throw new IllegalArgumentException("limit must be positive");
     }
     private static EventName event(String v){return v==null?null:new EventName(v);
     }

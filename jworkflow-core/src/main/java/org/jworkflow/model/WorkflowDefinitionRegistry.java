@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentMap;
 public final class WorkflowDefinitionRegistry {
     /** Creates an empty registry with no selected definitions or activated sources. */
     public WorkflowDefinitionRegistry() {
+        // Default construction requires no additional setup.
     }
 
     private final ConcurrentMap<String, WorkflowDefinition> definitions = new ConcurrentHashMap<>();

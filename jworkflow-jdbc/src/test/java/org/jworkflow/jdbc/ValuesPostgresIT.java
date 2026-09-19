@@ -20,13 +20,13 @@ class ValuesPostgresIT {
     @AfterAll static void stop() throws Exception { if(database!=null)database.close(); }
 
     @Test void nullEmptyLargeBinaryUnicodeJsonAndRedactionRoundTrip() throws Exception {
-        try(var schema=database.createSchema()) { StorageValueContract.payloads(persistence(schema)); }
+        try(var schema=database.createSchema()) { assertDoesNotThrow(() -> StorageValueContract.payloads(persistence(schema))); }
     }
 
     @Test void allRepositoryTimeValuesAndExactRevisionsRoundTrip() throws Exception {
         try(var schema=database.createSchema()) {
             var persistence=persistence(schema);
-            StorageValueContract.exactTimesAndRevisions(persistence);
+            assertDoesNotThrow(() -> StorageValueContract.exactTimesAndRevisions(persistence));
             try(Connection connection=schema.openConnection(); PreparedStatement statement=connection.prepareStatement("select created_at from workflow_instance where created_at=?")) {
                 BigDecimal min=PostgresqlInstantCodec.encode(Instant.MIN);
                 statement.setBigDecimal(1,min);
@@ -178,12 +178,7 @@ class ValuesPostgresIT {
                 UUID id=table.equals("workflow_timer")?timer.timerId():table.equals("workflow_inbox")?inbox.messageId():outbox.messageId();
                 claim(schema,table,id,next);
             }
-            assertEquals(1,persistence.timers().releaseExpiredClaims(next));
-            assertEquals(1,persistence.inbox().releaseExpiredClaims(next));
-            assertEquals(1,persistence.outbox().releaseExpiredClaims(next));
-            assertNull(persistence.timers().findByWorkflowInstance(timer.workflowInstanceId()).get(0).claimUntil());
-            assertNull(persistence.inbox().findById(inbox.messageId()).orElseThrow().claimUntil());
-            assertNull(persistence.outbox().findById(outbox.messageId()).orElseThrow().claimUntil());
+            assertExpiredClaims(persistence, next, timer, inbox, outbox);
         }
     }
 
@@ -195,7 +190,9 @@ class ValuesPostgresIT {
             try(Connection connection=schema.openConnection(); Statement statement=connection.createStatement()) {
                 statement.executeUpdate("update workflow_instance set updated_at=999999999999999999999.000000000");
             }
-            assertThrows(PersistenceSerializationException.class,()->persistence.instances().findById(snapshot.instanceId()));
+            var instances = persistence.instances();
+            var id = snapshot.instanceId();
+            assertThrows(PersistenceSerializationException.class,()->instances.findById(id));
         }
     }
 
@@ -229,5 +226,13 @@ class ValuesPostgresIT {
         try(Connection connection=schema.openConnection(); PreparedStatement statement=connection.prepareStatement("select "+column+" from "+table+" where id=?")) {
             statement.setString(1,id.toString()); try(ResultSet rows=statement.executeQuery()) { assertTrue(rows.next()); assertEquals(PostgresqlInstantCodec.encode(expected),rows.getBigDecimal(1)); }
         }
+    }
+    private static void assertExpiredClaims(JdbcWorkflowPersistence persistence, Instant next, org.jworkflow.model.WorkflowTimer timer, InboxMessage inbox, OutboxMessage outbox) {
+            assertEquals(1,persistence.timers().releaseExpiredClaims(next));
+            assertEquals(1,persistence.inbox().releaseExpiredClaims(next));
+            assertEquals(1,persistence.outbox().releaseExpiredClaims(next));
+            assertNull(persistence.timers().findByWorkflowInstance(timer.workflowInstanceId()).get(0).claimUntil());
+            assertNull(persistence.inbox().findById(inbox.messageId()).orElseThrow().claimUntil());
+            assertNull(persistence.outbox().findById(outbox.messageId()).orElseThrow().claimUntil());
     }
 }

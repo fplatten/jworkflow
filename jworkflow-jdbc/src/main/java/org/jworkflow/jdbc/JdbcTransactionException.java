@@ -99,16 +99,21 @@ public final class JdbcTransactionException extends WorkflowPersistenceException
     public static Category classify(Throwable failure) {
         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Throwable current = failure; current != null && seen.add(current); current = current.getCause()) {
-            if (!(current instanceof SQLException sql)) continue;
-            String state = sql.getSQLState();
-            if (state == null) continue;
-            if (state.equals("40P01")) return Category.DEADLOCK;
-            if (state.equals("40001")) return Category.SERIALIZATION;
-            if (state.equals("25P02")) return Category.ABORTED;
-            if (state.equals("57014") || state.equals("55P03") || state.equals("HYT00") || state.equals("HYT01")) return Category.TIMEOUT;
-            if (state.startsWith("23")) return Category.CONSTRAINT;
-            if (state.startsWith("08") || state.equals("57P01") || state.equals("57P02") || state.equals("57P03")) return Category.CONNECTION;
+            if (current instanceof SQLException sql) {
+                Category category = classifyState(sql.getSQLState());
+                if (category != Category.OTHER) return category;
+            }
         }
+        return Category.OTHER;
+    }
+    private static Category classifyState(String state) {
+        if (state == null) return Category.OTHER;
+        if (state.equals("40P01")) return Category.DEADLOCK;
+        if (state.equals("40001")) return Category.SERIALIZATION;
+        if (state.equals("25P02")) return Category.ABORTED;
+        if (state.equals("57014") || state.equals("55P03") || state.equals("HYT00") || state.equals("HYT01")) return Category.TIMEOUT;
+        if (state.startsWith("23")) return Category.CONSTRAINT;
+        if (state.startsWith("08") || state.equals("57P01") || state.equals("57P02") || state.equals("57P03")) return Category.CONNECTION;
         return Category.OTHER;
     }
 }

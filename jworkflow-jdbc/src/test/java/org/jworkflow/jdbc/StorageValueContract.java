@@ -56,7 +56,9 @@ final class StorageValueContract {
             WorkflowSnapshot changed = snapshot.withLockVersion(snapshot.lockVersion()+1);
             assertEquals(changed,persistence.instances().update(changed,snapshot.lockVersion()));
             assertEquals(changed,persistence.instances().findById(snapshot.instanceId()).orElseThrow());
-            assertThrows(WorkflowOptimisticLockException.class,()->persistence.instances().update(changed,snapshot.lockVersion()));
+            var instances = persistence.instances();
+            long expectedVersion = snapshot.lockVersion();
+            assertThrows(WorkflowOptimisticLockException.class,()->instances.update(changed,expectedVersion));
             WorkflowEvent event=event(snapshot.instanceId(),EventMessage.empty(),time);
             persistence.events().append(event); assertEquals(time,persistence.events().find(event.metadata().eventId()).orElseThrow().metadata().occurredAt());
             EventStatusAttempt status = new EventStatusAttempt(null,event.metadata().eventId(),null,1,"key",snapshot.instanceId(),"corr",

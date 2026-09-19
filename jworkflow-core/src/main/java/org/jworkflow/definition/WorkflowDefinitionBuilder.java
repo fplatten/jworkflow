@@ -299,6 +299,7 @@ public final class WorkflowDefinitionBuilder {
     public static final class RetryBuilder{int attempts;
         /** Creates an unconfigured attempt budget with zero backoff. Set the budget before building a step. */
         public RetryBuilder() {
+            // Default construction requires no additional setup.
         }
 
         Duration backoff=Duration.ZERO;
@@ -327,6 +328,7 @@ public final class WorkflowDefinitionBuilder {
     public static final class TimeoutBuilder{Duration duration;
         /** Creates an unconfigured timeout. Set a duration and the desired continuation before use. */
         public TimeoutBuilder() {
+            // Default construction requires no additional setup.
         }
 
         String target;
@@ -506,6 +508,7 @@ public final class WorkflowDefinitionBuilder {
     public static final class BranchBuilder{String variable;
         /** Creates an unconfigured branch condition and destination. */
         public BranchBuilder() {
+            // Default construction requires no additional setup.
         }
 
         String operator;

@@ -76,7 +76,7 @@ final class JdbcOutboxRepository implements OutboxRepository {
      * {@inheritDoc}
      */
     @Override public List<OutboxMessage> claimEligible(Instant now,String owner,Instant until,int limit){
-        return JdbcLeaseSupport.claim(connections,JdbcLeaseSupport.Queue.OUTBOX,COLUMNS,this::map,now,owner,until,limit);
+        return JdbcLeaseSupport.claim(connections,JdbcLeaseSupport.Queue.OUTBOX,COLUMNS,this::map,new JdbcLeaseSupport.ClaimRequest(now,owner,until,limit));
     }
     /**
      * {@inheritDoc}
@@ -217,8 +217,5 @@ final class JdbcOutboxRepository implements OutboxRepository {
     private boolean same(OutboxMessage a,OutboxMessage b){return a.eventId().equals(b.eventId())&&a.destination().equals(b.destination())&&a.idempotencyKey().equals(b.idempotencyKey())&&messages.sameContent(a.message(),b.message())&&Objects.equals(a.correlationId(),b.correlationId())&&Objects.equals(a.causationId(),b.causationId());
     }
     private static void one(PreparedStatement s,UUID id,String action)throws SQLException{if(s.executeUpdate()!=1)throw new PersistenceConstraintException("Guard rejected "+action+" for "+id);
-    }
-    private void validate(Instant now,String owner,Instant until,int limit){connections.requireWriteTransaction("Outbox claiming");
-        if(owner==null||owner.isBlank()||until==null||!until.isAfter(now)||limit<1)throw new IllegalArgumentException("Invalid claim arguments");
     }
 }

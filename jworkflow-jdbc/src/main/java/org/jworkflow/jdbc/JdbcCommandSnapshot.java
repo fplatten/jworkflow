@@ -8,6 +8,8 @@ import java.util.Map;
 /** JSON-compatible immutable command-time snapshot; relational schema and JSON envelope stay unchanged. */
 final class JdbcCommandSnapshot {
     private JdbcCommandSnapshot() { }
+    // A missing snapshot is persisted as JSON null; an empty map would change the stored format.
+    @SuppressWarnings("java:S1168")
     static Map<String,Object> encode(WorkflowSnapshot s) {
         if(s==null)return null;
         Map<String,Object> value=new LinkedHashMap<>();

@@ -61,18 +61,7 @@ class OperationsPostgresIT {
                 record("added-index-bytes",scalar(c,"select pg_relation_size('idx_workflow_instance_active_keyset')"));
 
             }
-            long began=System.nanoTime();
-            try(var lazy=engine(pool,false,true)) {
-                assertEquals(0,lazy.startupValidationQueryCount()); assertEquals(0,JdbcWorkflowEngine.RESIDENT_WORKFLOW_COUNT);
-            }
-            elapsed("lazy-startup",began,5000);
-            began=System.nanoTime();
-            try(var eager=engine(pool,false,false)) {
-                assertEquals(79,eager.startupValidationQueryCount());
-                assertEquals(128,eager.startupValidationPeakBatchSize());
-                assertEquals(0,JdbcWorkflowEngine.RESIDENT_WORKFLOW_COUNT);
-            }
-            elapsed("eager-startup",began,30000);
+            assertStartupModes(pool);
             try(var owner=engine(pool,false,true)) {
                 var ports=JdbcWorkflowPersistence.from(owner.connectionFactory());
                 var instances=ports.instances();
@@ -80,18 +69,7 @@ class OperationsPostgresIT {
                 assertEquals(2,ports.timers().findByWorkflowInstance(first).size());
                 var timeline=ports.events().findByWorkflowInstance(first);assertEquals(5,timeline.size());
                 assertEquals("x".repeat(256),((Map<?,?>)timeline.get(0).message().payload()).get("body"));
-                org.jworkflow.persistence.ActiveWorkflowCursor cursor=null;
-                Set<WorkflowInstanceId> visited=new HashSet<>();
-                while(true) {
-                    var page=instances.findActiveAfter(cursor,128);assertTrue(page.size()<=128);
-                    for(var snapshot:page) {
-                        assertTrue(visited.add(snapshot.instanceId()));
-                        assertEquals(123456789,snapshot.updatedAt().getNano());
-                    }
-                    if(page.size()<128)break;
-                    var last=page.get(page.size()-1);cursor=new org.jworkflow.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
-                }
-                assertEquals(10000,visited.size());
+                assertActivePagination(instances);
                 for(var queue:JdbcLeaseSupport.Queue.values()) progress(owner.connectionFactory(),queue);
                 try(var c=pool.getConnection()) {
                     for(var queue:JdbcLeaseSupport.Queue.values()) {
@@ -99,7 +77,7 @@ class OperationsPostgresIT {
                         assertEquals("10000",scalar(c,"select count(*) from "+queue.table+" where claim_token='expired'"));
                     }
                 }
-                began=System.nanoTime();
+                long began=System.nanoTime();
                 try(var recovered=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL).dataSource(pool)
                         .initialize(false).timerPolling(false).lazyDefinitionValidation(true)
                         .clock(java.time.Clock.fixed(NOW,java.time.ZoneOffset.UTC)).build()) {
@@ -116,6 +94,22 @@ class OperationsPostgresIT {
             assertFalse(pool.isClosed(),"Engine must not close host pool");
             assertEquals(0,pool.getHikariPoolMXBean().getActiveConnections());
         }
+    }
+
+    private static void assertStartupModes(HikariDataSource pool) throws Exception {
+        long began=System.nanoTime();
+        try(var lazy=engine(pool,false,true)) {
+            assertEquals(0,lazy.startupValidationQueryCount());
+            assertEquals(0,JdbcWorkflowEngine.RESIDENT_WORKFLOW_COUNT);
+        }
+        elapsed("lazy-startup",began,5000);
+        began=System.nanoTime();
+        try(var eager=engine(pool,false,false)) {
+            assertEquals(79,eager.startupValidationQueryCount());
+            assertEquals(128,eager.startupValidationPeakBatchSize());
+            assertEquals(0,JdbcWorkflowEngine.RESIDENT_WORKFLOW_COUNT);
+        }
+        elapsed("eager-startup",began,30000);
     }
 
     private static void capturePlans(Connection c,String prefix)throws Exception {
@@ -191,23 +185,7 @@ class OperationsPostgresIT {
                         long began=System.nanoTime();assertThrows(SQLTransientConnectionException.class,pool::getConnection);
                         assertTrue(elapsed("pool-exhaustion",began,3000)>=250);
                     }
-                    var tx=new JdbcTransactionManager(factory);
-                    tx.inWriteTransaction(()->{try(var c=factory.open()){
-                        assertFalse(c.getAutoCommit());assertEquals(Connection.TRANSACTION_READ_COMMITTED,c.getTransactionIsolation());
-                        execute(c,"insert into workflow_lock values ('lock','owner',0)");
-                    }catch(SQLException e){throw new RuntimeException(e);}return null;});
-                    try(var c=pool.getConnection()){
-                        assertTrue(c.getAutoCommit());assertFalse(c.isReadOnly());
-                        assertEquals(Connection.TRANSACTION_REPEATABLE_READ,c.getTransactionIsolation());
-                    }
-                    try(var holder=schema.openConnection();var blocked=pool.getConnection()) {
-                        holder.setAutoCommit(false);execute(holder,"update workflow_lock set owner_id='held' where lock_key='lock'");
-                        blocked.setAutoCommit(false);execute(blocked,"set local lock_timeout='250ms'");
-                        long began=System.nanoTime();
-                        assertEquals("55P03",assertThrows(SQLException.class,()->execute(blocked,"update workflow_lock set owner_id='blocked' where lock_key='lock'")).getSQLState());
-                        elapsed("row-lock-timeout",began,3000);blocked.rollback();holder.rollback();
-                        assertEquals("owner",scalar(blocked,"select owner_id from workflow_lock where lock_key='lock'"));blocked.rollback();
-                    }
+                    assertPooledTransactionStateAndLockTimeout(factory, pool, schema);
                     long began=System.nanoTime();
                     try(var broken=pool.getConnection();var admin=database.openAdminConnection()) {
                         String pid=scalar(broken,"select pg_backend_pid()");
@@ -314,4 +292,37 @@ class OperationsPostgresIT {
         try(var statement=c.prepareStatement(sql)) {statement.setString(1,new JdbcJsonCodec().write(payload));statement.executeUpdate();}
     }
     private static void execute(Connection c,String sql)throws SQLException {try(var s=c.createStatement()){s.execute(sql);}}
+    private static void assertActivePagination(org.jworkflow.persistence.WorkflowInstanceRepository instances) {
+                org.jworkflow.persistence.ActiveWorkflowCursor cursor=null;
+                Set<WorkflowInstanceId> visited=new HashSet<>();
+                while(true) {
+                    var page=instances.findActiveAfter(cursor,128);assertTrue(page.size()<=128);
+                    for(var snapshot:page) {
+                        assertTrue(visited.add(snapshot.instanceId()));
+                        assertEquals(123456789,snapshot.updatedAt().getNano());
+                    }
+                    if(page.size()<128)break;
+                    var last=page.get(page.size()-1);cursor=new org.jworkflow.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
+                }
+                assertEquals(10000,visited.size());
+    }
+    private static void assertPooledTransactionStateAndLockTimeout(JdbcConnectionFactory factory, HikariDataSource pool, PostgresTestDatabase.Schema schema) throws Exception {
+                    var tx=new JdbcTransactionManager(factory);
+                    tx.inWriteTransaction(()->{try(var c=factory.open()){
+                        assertFalse(c.getAutoCommit());assertEquals(Connection.TRANSACTION_READ_COMMITTED,c.getTransactionIsolation());
+                        execute(c,"insert into workflow_lock values ('lock','owner',0)");
+                    }catch(SQLException e){throw new RuntimeException(e);}return null;});
+                    try(var c=pool.getConnection()){
+                        assertTrue(c.getAutoCommit());assertFalse(c.isReadOnly());
+                        assertEquals(Connection.TRANSACTION_REPEATABLE_READ,c.getTransactionIsolation());
+                    }
+                    try(var holder=schema.openConnection();var blocked=pool.getConnection()) {
+                        holder.setAutoCommit(false);execute(holder,"update workflow_lock set owner_id='held' where lock_key='lock'");
+                        blocked.setAutoCommit(false);execute(blocked,"set local lock_timeout='250ms'");
+                        long began=System.nanoTime();
+                        assertEquals("55P03",assertThrows(SQLException.class,()->execute(blocked,"update workflow_lock set owner_id='blocked' where lock_key='lock'")).getSQLState());
+                        elapsed("row-lock-timeout",began,3000);blocked.rollback();holder.rollback();
+                        assertEquals("owner",scalar(blocked,"select owner_id from workflow_lock where lock_key='lock'"));blocked.rollback();
+                    }
+    }
 }

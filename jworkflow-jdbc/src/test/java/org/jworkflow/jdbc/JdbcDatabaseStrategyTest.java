@@ -39,9 +39,10 @@ class JdbcDatabaseStrategyTest {
 
     @Test void typelessPersistenceRejectsUnsupportedProductsAndClosesConnection() {
         AtomicInteger closes = new AtomicInteger();
+        var unknownSource = source(connection("Unknown", closes, false));
+        Map<String,String> settings = Map.of();
         WorkflowInfrastructureException failure = assertThrows(WorkflowInfrastructureException.class,
-                () -> JdbcWorkflowPersistence.create(null, null, null, null,
-                        source(connection("Unknown", closes, false)), false, Map.of()));
+                () -> JdbcWorkflowPersistence.create(null, null, null, null, unknownSource, false, settings));
         assertTrue(failure.getCause().getMessage().contains("Unsupported JDBC database product"));
         assertEquals(1, closes.get());
     }
@@ -97,11 +98,13 @@ class JdbcDatabaseStrategyTest {
                 assertTrue(row.next()); assertEquals(1, row.getInt(1));
             }
         }
-        assertThrows(IllegalStateException.class, () -> WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL).build());
-        assertThrows(IllegalStateException.class, () -> WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL)
+        var missingConnection = WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL);
+        assertThrows(IllegalStateException.class, missingConnection::build);
+        var unsupportedPersistence = WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL)
                 .jdbcUrl("jdbc:unused").persistence((org.jworkflow.persistence.WorkflowPersistence) Proxy.newProxyInstance(
                         getClass().getClassLoader(), new Class<?>[]{org.jworkflow.persistence.WorkflowPersistence.class},
-                        (p,m,a) -> null)).build());
+                        (p,m,a) -> null));
+        assertThrows(IllegalStateException.class, unsupportedPersistence::build);
     }
 
     static DataSource source(Connection connection) {

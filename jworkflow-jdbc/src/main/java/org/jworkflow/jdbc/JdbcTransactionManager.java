@@ -22,7 +22,7 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
     private final JdbcConnectionFactory connectionFactory;
     private final ThreadLocal<TransactionState> state = new ThreadLocal<>();
     private final ThreadLocal<ArrayDeque<Runnable>> completing = new ThreadLocal<>();
-    private volatile Consumer<Throwable> completionFailureHandler;
+    private final java.util.concurrent.atomic.AtomicReference<Consumer<Throwable>> completionFailureHandler = new java.util.concurrent.atomic.AtomicReference<>();
 
     JdbcTransactionManager(JdbcConnectionFactory connectionFactory) {
         this.connectionFactory = Objects.requireNonNull(connectionFactory, "connectionFactory");
@@ -30,11 +30,15 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
 
     /**
      * Installs an optional diagnostic sink for failures after the durable outcome is known.
-     * @param handler application callback for the selected action
+     * Replaces the sink atomically; an invocation already in progress may finish using the previous sink.
+     * The sink runs synchronously on the reporting thread and may be called concurrently by different
+     * transactions, so its implementation must be thread-safe. Sink failures, including Errors, are
+     * isolated and fall back to the default generic diagnostic without changing the committed result.
+     * @param handler diagnostic callback receiving the original failure; must not expose sensitive details
      * @throws NullPointerException if handler is null
      */
     public void setCompletionFailureHandler(Consumer<Throwable> handler) {
-        completionFailureHandler = Objects.requireNonNull(handler, "handler");
+        completionFailureHandler.set(Objects.requireNonNull(handler, "handler"));
     }
 
     /**
@@ -58,8 +62,9 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
     /**
      * {@inheritDoc}
      */
+    @SuppressWarnings("java:S1181") // Diagnostic failures, including Errors, cannot undo a known commit.
     @Override public void reportCompletionFailure(Throwable failure) {
-        Consumer<Throwable> handler = completionFailureHandler;
+        Consumer<Throwable> handler = completionFailureHandler.get();
         if (handler == null) WorkflowTransactionManager.super.reportCompletionFailure(failure);
         else {
             try { handler.accept(failure); }
@@ -67,6 +72,7 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         }
     }
 
+    @SuppressWarnings("java:S1181") // Isolate each post-commit callback so later notifications still run.
     private void dispatch(Runnable notification) {
         try { notification.run(); } catch (Throwable failure) { reportCompletionFailure(failure); }
     }
@@ -116,6 +122,7 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         return inWriteTransaction(work);
     }
 
+    @SuppressWarnings("java:S1181") // A nested Error must mark the outer transaction rollback-only.
     private <T> T executeInternal(WorkflowTransactionalWork<T> work, boolean write) {
         Objects.requireNonNull(work, "work");
         TransactionState existing = state.get();
@@ -128,16 +135,56 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         }
     }
 
+    @SuppressWarnings("java:S1181") // Roll back on Error, then rethrow the original Error without replay.
     private <T> T executeOuter(WorkflowTransactionalWork<T> work, boolean write) {
-        Connection connection = null;
-        boolean originalAuto = true, originalReadOnly = false, captured = false;
-        int originalIsolation = Connection.TRANSACTION_NONE;
-        boolean immediate = false, started = false, ended = false, committed = false;
-        Throwable failure = null;
-        String phase = "setup";
-        T result = null;
+        TransactionResources resources = new TransactionResources();
         TransactionState outer = new TransactionState();
+        T result = null;
         try {
+            resources.begin(write);
+            state.set(outer);
+            resources.phase = "work";
+            result = work.execute();
+            checkRollbackOnly(outer);
+            resources.phase = "commit";
+            connectionFactory.strategy().beforeCommit(resources.connection);
+            if (resources.immediate) boundary(resources.connection, "commit"); else resources.connection.commit();
+            resources.committed = true;
+            resources.ended = true;
+        } catch (Throwable original) {
+            resources.failure = original;
+            resources.rollback();
+        } finally {
+            state.remove();
+            resources.finish();
+        }
+        if (resources.failure != null) throw propagate(resources.failure, resources.phase);
+        flush(outer.notifications);
+        return result;
+    }
+
+    private void checkRollbackOnly(TransactionState outer) {
+        if (connectionFactory.rollbackCause() != null) throw new WorkflowPersistenceException(
+                "JDBC transaction was marked rollback-only by a stale lease guard", connectionFactory.rollbackCause());
+        if (outer.rollbackOnly) throw new WorkflowPersistenceException(
+                "JDBC transaction was marked rollback-only by nested work", outer.firstFailure);
+    }
+
+    /** Owns the borrowed connection and records which cleanup actions are safe. */
+    private final class TransactionResources {
+        Connection connection;
+        boolean originalAuto;
+        boolean originalReadOnly;
+        boolean captured;
+        int originalIsolation;
+        boolean immediate;
+        boolean started;
+        boolean ended;
+        boolean committed;
+        Throwable failure;
+        String phase = "setup";
+
+        void begin(boolean write) throws SQLException {
             connection = connectionFactory.openPhysical();
             originalAuto = connection.getAutoCommit();
             originalReadOnly = connection.isReadOnly();
@@ -148,50 +195,37 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
             immediate = write && strategy.usesImmediateWriteTransaction();
             if (originalReadOnly) connection.setReadOnly(false);
             int isolation = strategy.transactionIsolation();
-            if (isolation != Connection.TRANSACTION_NONE && isolation != originalIsolation)
+            if (isolation != Connection.TRANSACTION_NONE && isolation != originalIsolation) {
                 connection.setTransactionIsolation(isolation);
+            }
             started = true;
             if (immediate) boundary(connection, "begin immediate"); else connection.setAutoCommit(false);
-            state.set(outer);
             connectionFactory.bind(connection, immediate || !strategy.usesImmediateWriteTransaction());
-            phase = "work";
-            result = work.execute();
-            if(connectionFactory.rollbackCause()!=null)throw new WorkflowPersistenceException(
-                    "JDBC transaction was marked rollback-only by a stale lease guard",connectionFactory.rollbackCause());
-            if (outer.rollbackOnly) throw new WorkflowPersistenceException(
-                    "JDBC transaction was marked rollback-only by nested work", outer.firstFailure);
-            phase = "commit";
-            strategy.beforeCommit(connection);
-            if (immediate) boundary(connection, "commit"); else connection.commit();
-            committed = true;
-            ended = true;
-        } catch (Throwable original) {
-            failure = original;
-            if (started && !ended) {
-                try {
-                    if (immediate) boundary(connection, "rollback"); else connection.rollback();
-                    ended = true;
-                } catch (Throwable rollbackFailure) { suppress(failure, rollbackFailure); }
-            }
-        } finally {
-            state.remove();
-            if (connection != null) {
-                if (connectionFactory.currentTransactionConnection() == connection) connectionFactory.unbind(connection);
-                // Never enable auto-commit after failed rollback: that could commit partial work.
-                Throwable cleanup = cleanup(connection, captured && (!started || ended),
-                        originalAuto, originalReadOnly, originalIsolation);
-                if (cleanup != null) {
-                    if (failure != null) suppress(failure, cleanup);
-                    else if (committed) reportCompletionFailure(cleanup);
-                    else { failure = cleanup; phase = "cleanup"; }
-                }
-            }
         }
-        if (failure != null) throw propagate(failure, phase);
-        flush(outer.notifications);
-        return result;
+
+        @SuppressWarnings("java:S1181") // Preserve the primary failure if rollback itself throws an Error.
+        void rollback() {
+            if (!started || ended) return;
+            try {
+                if (immediate) boundary(connection, "rollback"); else connection.rollback();
+                ended = true;
+            } catch (Throwable rollbackFailure) { suppress(failure, rollbackFailure); }
+        }
+
+        void finish() {
+            if (connection == null) return;
+            if (connectionFactory.currentTransactionConnection() == connection) connectionFactory.unbind(connection);
+            // Never enable auto-commit after failed rollback: that could commit partial work.
+            Throwable problem = cleanup(connection, captured && (!started || ended),
+                    originalAuto, originalReadOnly, originalIsolation);
+            if (problem == null) return;
+            if (failure != null) suppress(failure, problem);
+            else if (committed) reportCompletionFailure(problem);
+            else { failure = problem; phase = "cleanup"; }
+        }
     }
 
+    @SuppressWarnings("java:S1181") // Attempt every reset/close and retain failures without changing commit outcome.
     private static Throwable cleanup(Connection connection, boolean restore, boolean auto,
             boolean readOnly, int isolation) {
         Throwable failure = null;

@@ -92,7 +92,7 @@ final class JdbcInboxRepository implements InboxRepository {
      * {@inheritDoc}
      */
     @Override public List<InboxMessage> claimEligible(Instant now,String owner,Instant until,int limit){
-        return JdbcLeaseSupport.claim(connections,JdbcLeaseSupport.Queue.INBOX,COLUMNS,this::map,now,owner,until,limit);
+        return JdbcLeaseSupport.claim(connections,JdbcLeaseSupport.Queue.INBOX,COLUMNS,this::map,new JdbcLeaseSupport.ClaimRequest(now,owner,until,limit));
     }
     /**
      * {@inheritDoc}
@@ -200,7 +200,5 @@ final class JdbcInboxRepository implements InboxRepository {
     }catch(SQLException x){throw new WorkflowInfrastructureException("Failed inbox transition "+id,x);
     }}
     private static void one(PreparedStatement s,UUID id,String action)throws SQLException{if(s.executeUpdate()!=1)throw new PersistenceConstraintException("Guard rejected "+action+" for "+id);
-    }
-    private static void validateClaim(Instant now,String owner,Instant until,int limit){if(owner==null||owner.isBlank()||until==null||!until.isAfter(now)||limit<1)throw new IllegalArgumentException("Invalid claim arguments");
     }
 }

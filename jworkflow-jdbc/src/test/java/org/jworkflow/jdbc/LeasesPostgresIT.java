@@ -25,6 +25,14 @@ class LeasesPostgresIT {
     @BeforeAll static void start(){database=PostgresTestDatabase.start();}
     @AfterAll static void stop()throws Exception{if(database!=null)database.close();}
     static JdbcWorkflowPersistence ports(DataSource source,boolean initialize){return JdbcWorkflowPersistence.create(null,null,null,null,source,initialize,Map.of());}
+    @TestFactory Stream<DynamicTest> leaseSqlBindsUntrustedValues() {
+        return Arrays.stream(Kind.values()).map(kind -> DynamicTest.dynamicTest(kind.name(), () -> {
+            try (var schema = database.createSchema()) {
+                var source = schema.dataSource();
+                LeaseSqlSafetyContract.assertBoundValues(ports(source, true), source, kind);
+            }
+        }));
+    }
     @TestFactory Stream<DynamicTest> expiryAndGenerationContracts(){return Arrays.stream(Kind.values()).map(kind->DynamicTest.dynamicTest(kind.name(),()->{
         try(var schema=database.createSchema()){
             var p=ports(schema.dataSource(),true);expiryAndFencing(p,kind,true);
@@ -68,7 +76,8 @@ class LeasesPostgresIT {
             try(var engine=bareEngine(schema.dataSource(),Clock.fixed(NOW.plusSeconds(10),ZoneOffset.UTC))){
                 var restarted=JdbcWorkflowPersistence.from(engine.connectionFactory());var newLease=acquire(restarted,kind,NOW.plusSeconds(10),"worker",NOW.plusSeconds(20),1).get(0);
                 assertEquals(original.id(),newLease.id());assertNotEquals(original.token(),newLease.token());
-                assertThrows(StaleWorkflowClaimException.class,()->finish(restarted,kind,original,0,NOW.plusSeconds(10),false));
+                var completionTime = NOW.plusSeconds(10);
+                assertThrows(StaleWorkflowClaimException.class,()->finish(restarted,kind,original,0,completionTime,false));
             }
         }
     }));}
@@ -80,7 +89,8 @@ class LeasesPostgresIT {
             Lease current=acquire(p,Kind.INBOX,NOW.plusSeconds(1),"worker",NOW.plusSeconds(2),1).get(0);AtomicInteger dispatches=new AtomicInteger();
             var processor=new InboxProcessingService(p.inbox(),p.eventStatuses(),tx,message->{dispatches.incrementAndGet();return List.of(TransactionNotificationContract.command("stale-inbox"));},
                     command->engine.start((StartWorkflowCommand)command),Clock.fixed(NOW,ZoneOffset.UTC));
-            assertThrows(StaleWorkflowClaimException.class,()->processor.process((InboxMessage)old.value(),"worker"));assertEquals(0,dispatches.get());
+            var staleInbox = (InboxMessage)old.value();
+            assertThrows(StaleWorkflowClaimException.class,()->processor.process(staleInbox,"worker"));assertEquals(0,dispatches.get());
             assertThrows(WorkflowPersistenceException.class,()->tx.inWriteTransaction(()->{
                 engine.start(TransactionNotificationContract.command("must-roll-back"));history(p,Kind.INBOX,old);
                 assertThrows(StaleWorkflowClaimException.class,()->finish(p,Kind.INBOX,old,0,NOW,false));return null;
@@ -122,13 +132,17 @@ class LeasesPostgresIT {
                 var failure=assertThrows(java.lang.reflect.InvocationTargetException.class,()->method.invoke(engine,(WorkflowTimer)old.value()));assertInstanceOf(StaleWorkflowClaimException.class,failure.getCause());
                 assertEquals(started.snapshot(),engine.snapshot(started.workflowInstanceId()));assertEquals(events,count(schema.dataSource(),"workflow_event"));assertEquals(outbox,count(schema.dataSource(),"workflow_outbox"));assertEquals(0,count(schema.dataSource(),"workflow_timer_attempt"));
                 // A stale final timer guard after successful workflow writes must also poison the whole transaction.
-                assertThrows(WorkflowPersistenceException.class,()->engine.transactionManager().inTransaction(()->{
+                var transactionManager = engine.transactionManager();
+                assertThrows(WorkflowPersistenceException.class,()->transactionManager.inTransaction(()->{
                     engine.start(TransactionNotificationContract.command("stale-timer-effects"));history(p,Kind.TIMER,old);
-                    assertThrows(StaleWorkflowClaimException.class,()->finish(p,Kind.TIMER,old,0,clock.instant(),false));return null;
+                    var completionTime = clock.instant();
+                    assertThrows(StaleWorkflowClaimException.class,()->finish(p,Kind.TIMER,old,0,completionTime,false));return null;
                 }));assertEquals(1,count(schema.dataSource(),"workflow_instance"));assertEquals(1,count(schema.dataSource(),"workflow_command_result"));assertEquals(events,count(schema.dataSource(),"workflow_event"));
                 method.invoke(engine,(WorkflowTimer)current.value());assertEquals(WorkflowStatus.COMPLETED,engine.snapshot(started.workflowInstanceId()).status());
                 assertEquals(1,count(schema.dataSource(),"workflow_timer_attempt"));assertEquals(WorkflowTimerStatus.FIRED,p.timers().findByWorkflowInstance(started.workflowInstanceId()).get(0).status());
-                assertThrows(StaleWorkflowClaimException.class,()->p.timers().save((WorkflowTimer)old.value()));
+                var timerRepository = p.timers();
+                var staleTimer = (WorkflowTimer)old.value();
+                assertThrows(StaleWorkflowClaimException.class,()->timerRepository.save(staleTimer));
             }
         }
     }
@@ -138,7 +152,8 @@ class LeasesPostgresIT {
             var p=JdbcWorkflowPersistence.from(engine.connectionFactory());var started=engine.start(TransactionNotificationContract.command("cancel"));var timer=p.timers().findByWorkflowInstance(started.workflowInstanceId()).get(0);
             var lease=acquire(p,Kind.TIMER,timer.dueAt(),"worker",timer.dueAt().plusSeconds(1),1).get(0);
             engine.cancel(new CancelWorkflowCommand(started.workflowInstanceId(),TransactionNotificationContract.command("cancel-key").metadata()));
-            assertThrows(StaleWorkflowClaimException.class,()->finish(p,Kind.TIMER,lease,0,timer.dueAt(),false));
+            var dueAt = timer.dueAt();
+            assertThrows(StaleWorkflowClaimException.class,()->finish(p,Kind.TIMER,lease,0,dueAt,false));
             assertEquals(WorkflowTimerStatus.CANCELED,p.timers().findByWorkflowInstance(started.workflowInstanceId()).get(0).status());
         }
     }
@@ -149,12 +164,13 @@ class LeasesPostgresIT {
             AtomicInteger sends=new AtomicInteger();AtomicReference<Lease> current=new AtomicReference<>();
             var service=publisher(p,message->{assertFalse(p.transactions().isTransactionActive());sends.incrementAndGet();
                 current.set(acquire(other,Kind.OUTBOX,NOW.plusSeconds(1),"worker",NOW.plusSeconds(2),1).get(0));if(failSend)throw new IllegalStateException("transport failed after send");},Clock.fixed(NOW.plusSeconds(1),ZoneOffset.UTC));
-            assertThrows(StaleWorkflowClaimException.class,()->service.publish((OutboxMessage)old.value(),"worker"));
+            var staleOutbox = (OutboxMessage)old.value();
+            assertThrows(StaleWorkflowClaimException.class,()->service.publish(staleOutbox,"worker"));
             assertEquals(1,sends.get());assertEquals(0,count(schema.dataSource(),"workflow_outbox_attempt"));assertEquals(0,count(schema.dataSource(),"event_status"));
             assertEquals(current.get().token(),p.outbox().findById(old.id()).orElseThrow().claimToken());
             publisher(p,message->sends.incrementAndGet(),Clock.fixed(NOW.plusSeconds(2),ZoneOffset.UTC)).publish((OutboxMessage)current.get().value(),"worker");
             assertEquals(2,sends.get());assertEquals(1,count(schema.dataSource(),"workflow_outbox_attempt"));assertEquals(1,count(schema.dataSource(),"event_status"));
-            assertThrows(StaleWorkflowClaimException.class,()->service.publish((OutboxMessage)old.value(),"worker"));assertEquals(2,sends.get());
+            assertThrows(StaleWorkflowClaimException.class,()->service.publish(staleOutbox,"worker"));assertEquals(2,sends.get());
         }
     }));}
 
@@ -162,7 +178,8 @@ class LeasesPostgresIT {
         try(var schema=database.createSchema()){
             var faults=new TransactionTestDataSource(schema.dataSource());var p=ports(faults,true);seed(p,Kind.OUTBOX);var old=acquire(p,Kind.OUTBOX,NOW,"worker",NOW.plusSeconds(1),1).get(0);AtomicInteger sends=new AtomicInteger();
             var service=publisher(p,message->{assertFalse(p.transactions().isTransactionActive());sends.incrementAndGet();faults.commitBeforeFailure=committed;faults.commitFailure=new SQLException("lost record acknowledgment","08006");},Clock.fixed(NOW,ZoneOffset.UTC));
-            assertThrows(JdbcTransactionException.class,()->service.publish((OutboxMessage)old.value(),"worker"));faults.commitFailure=null;
+            var staleOutbox = (OutboxMessage)old.value();
+            assertThrows(JdbcTransactionException.class,()->service.publish(staleOutbox,"worker"));faults.commitFailure=null;
             assertEquals(committed?1:0,count(schema.dataSource(),"workflow_outbox_attempt"));assertEquals(committed?1:0,count(schema.dataSource(),"event_status"));
             var recovered=acquire(ports(schema.dataSource(),false),Kind.OUTBOX,NOW.plusSeconds(1),"worker",NOW.plusSeconds(2),1);
             if(committed)assertTrue(recovered.isEmpty());else{
@@ -176,7 +193,8 @@ class LeasesPostgresIT {
         try(var schema=database.createSchema()){
             var p=ports(schema.dataSource(),true);seed(p,Kind.OUTBOX);var first=acquire(p,Kind.OUTBOX,NOW,"worker",NOW.plusSeconds(1),1).get(0);AtomicInteger sends=new AtomicInteger();MutableClock clock=new MutableClock(NOW);
             var service=publisher(p,message->{assertFalse(p.transactions().isTransactionActive());sends.incrementAndGet();throw new IllegalStateException("failed");},clock);
-            assertThrows(IllegalStateException.class,()->p.jdbcTransactions().inTransaction(()->service.publish((OutboxMessage)first.value(),"worker")));assertEquals(0,sends.get());
+            var transactionManager = p.jdbcTransactions();
+            assertThrows(IllegalStateException.class,()->transactionManager.inTransaction(()->service.publish((OutboxMessage)first.value(),"worker")));assertEquals(0,sends.get());
             assertEquals(OutboxMessageStatus.RETRY_SCHEDULED,service.publish((OutboxMessage)first.value(),"worker").status());
             assertTrue(acquire(p,Kind.OUTBOX,NOW.plusSeconds(1).minusNanos(1),"worker",NOW.plusSeconds(2),1).isEmpty());clock.now.set(NOW.plusSeconds(1));
             var next=acquire(p,Kind.OUTBOX,clock.instant(),"worker",NOW.plusSeconds(2),1).get(0);assertNotEquals(first.token(),next.token());

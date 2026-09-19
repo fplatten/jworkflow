@@ -23,7 +23,7 @@ class DuplicatesPostgresIT {
     @Test void binaryJsonAndEnvelopeDuplicatesValidateByStoredContent()throws Exception {
         try(var schema=database.createSchema()) {
             var ports=JdbcWorkflowPersistence.create(null,null,null,null,schema.dataSource(),true,Map.of());
-            ports.jdbcTransactions().inTransaction(()->{envelopeAndTypeConflicts(ports);return null;});
+            ports.jdbcTransactions().inTransaction(()->{assertDoesNotThrow(() -> envelopeAndTypeConflicts(ports));return null;});
         }
     }
 
@@ -188,7 +188,9 @@ class DuplicatesPostgresIT {
                     throw failure;
                 }
             };
-            assertThrows(WorkflowInfrastructureException.class,()->{if(nested)tested.jdbcTransactions().inTransaction(call::get);else call.get();});
+            var transactionManager = tested.jdbcTransactions();
+            if (nested) assertThrows(WorkflowInfrastructureException.class, () -> transactionManager.inTransaction(call::get));
+            else assertThrows(WorkflowInfrastructureException.class, call::get);
             assertEquals(constraint.equals("unique")?1:0,TransactionNotificationContract.count(schema.dataSource(),kind.table));
             assertEquals(0,TransactionNotificationContract.count(schema.dataSource(),"pg07_marker"));
             assertEquals(1,scalar(factory,"select 1"));

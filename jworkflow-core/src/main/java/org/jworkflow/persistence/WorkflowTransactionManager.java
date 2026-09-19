@@ -34,6 +34,8 @@ public interface WorkflowTransactionManager {
      * @param notification notification to dispatch
      * @throws NullPointerException if notification is null
      */
+    // Errors must preserve rollback/resource cleanup or isolate already committed notifications.
+    @SuppressWarnings("java:S1181")
     default void afterCommit(Runnable notification) {
         java.util.Objects.requireNonNull(notification, "notification");
         try { notification.run(); }

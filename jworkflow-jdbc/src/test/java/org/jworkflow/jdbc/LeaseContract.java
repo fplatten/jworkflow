@@ -68,7 +68,8 @@ final class LeaseContract {
         for(int op=0;op<3;op++){
             int operation=op;
             // Catching a failed final guard must still poison the outer transaction and remove earlier history.
-            assertThrows(WorkflowPersistenceException.class,()->p.jdbcTransactions().inWriteTransaction(()->{
+            var transactionManager = p.jdbcTransactions();
+            assertThrows(WorkflowPersistenceException.class,()->transactionManager.inWriteTransaction(()->{
                 history(p,kind,old);p.events().append(StorageValueContract.event(WorkflowInstanceId.random(),EventMessage.empty(),NOW));
                 assertThrows(StaleWorkflowClaimException.class,()->finish(p,kind,old,operation,until,false));return null;
             }));assertEquals(0,histories(p,kind,id));

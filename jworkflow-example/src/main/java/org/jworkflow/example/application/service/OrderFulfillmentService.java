@@ -16,6 +16,7 @@ import org.jworkflow.example.application.result.ShipmentCreationResult;
 public final class OrderFulfillmentService {
     /** Creates the stateless demonstration service without external transport dependencies. */
     public OrderFulfillmentService() {
+        // Default construction requires no additional setup.
     }
 
     /**

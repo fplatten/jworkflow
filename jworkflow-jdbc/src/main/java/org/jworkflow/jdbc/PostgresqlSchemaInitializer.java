@@ -28,6 +28,16 @@ final class PostgresqlSchemaInitializer {
             if (!connection.getAutoCommit()) {
                 throw new SQLException("Built-in PostgreSQL initialization requires an auto-commit connection free of host work");
             }
+            migrate(connection, migrations);
+        } catch (Exception failure) {
+            throw new WorkflowInfrastructureException("Failed to initialize PostgreSQL jworkflow schema", failure);
+        }
+    }
+
+    // Migration failure must roll back even when application or driver code throws an Error.
+    @SuppressWarnings("java:S1181")
+    private static void migrate(Connection connection, List<Migration> migrations)
+            throws SQLException, java.io.IOException, java.security.NoSuchAlgorithmException {
             boolean readOnly = connection.isReadOnly();
             int isolation = connection.getTransactionIsolation();
             Throwable primary = null;
@@ -50,17 +60,18 @@ final class PostgresqlSchemaInitializer {
                 transactionEnded = true;
             } catch (Exception | Error failure) {
                 primary = failure;
-                try { connection.rollback(); transactionEnded = true; }
-                catch (SQLException rollback) { failure.addSuppressed(rollback); }
+                transactionEnded = rollback(connection, failure);
                 throw failure;
             } finally {
                 // Enabling auto-commit after a failed rollback could commit uncertain work.
                 // Close the unusable borrow without further state changes in that case.
                 if (transactionEnded) restore(connection, readOnly, isolation, primary);
             }
-        } catch (Exception failure) {
-            throw new WorkflowInfrastructureException("Failed to initialize PostgreSQL jworkflow schema", failure);
-        }
+    }
+
+    private static boolean rollback(Connection connection, Throwable failure) {
+        try { connection.rollback(); return true; }
+        catch (SQLException rollback) { failure.addSuppressed(rollback); return false; }
     }
 
     private static void lockSchema(Connection connection) throws SQLException {
@@ -110,7 +121,7 @@ final class PostgresqlSchemaInitializer {
         }
     }
 
-    private static void apply(Connection connection, Migration migration) throws Exception {
+    private static void apply(Connection connection, Migration migration) throws SQLException, java.io.IOException, java.security.NoSuchAlgorithmException {
         String sql = JdbcSchemaInitializer.read(migration.resource());
         String checksum = JdbcSchemaInitializer.sha256(sql);
         try (PreparedStatement statement = connection.prepareStatement("select checksum from jworkflow_schema_history where version=?")) {

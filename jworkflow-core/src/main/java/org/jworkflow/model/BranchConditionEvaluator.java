@@ -16,6 +16,7 @@ import java.util.function.BiPredicate;
 public final class BranchConditionEvaluator {
     /** Creates an evaluator with no registered host predicates. */
     public BranchConditionEvaluator() {
+        // Default construction requires no additional setup.
     }
 
     private final ConcurrentMap<String, BiPredicate<Map<String, Object>, Map<String, Object>>> predicates = new ConcurrentHashMap<>();

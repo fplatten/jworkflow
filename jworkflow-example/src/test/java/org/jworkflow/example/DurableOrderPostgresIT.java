@@ -24,8 +24,8 @@ class DurableOrderPostgresIT {
                 System.out.println("Order restart: PostgreSQL "+connection.getMetaData().getDatabaseProductVersion()
                         +", driver "+connection.getMetaData().getDriverVersion()+", Java "+System.getProperty("java.version")+", image "+database.getDockerImageName());
             }
-            DurableOrderInboxRestartScenario.run(()->WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL)
-                    .dataSource(source).initialize(true).timerPolling(false));
+            org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> DurableOrderInboxRestartScenario.run(()->WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL)
+                    .dataSource(source).initialize(true).timerPolling(false)));
         }
     }
 }
