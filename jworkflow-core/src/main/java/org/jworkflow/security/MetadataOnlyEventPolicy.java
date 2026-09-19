@@ -6,7 +6,13 @@ import java.util.Objects;
 
 /** Retains routing metadata while replacing the payload and message attributes with a redaction marker. */
 public enum MetadataOnlyEventPolicy implements EventCapturePolicy {
+    /**
+     * Shared stateless instance.
+     */
     INSTANCE;
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowEvent filter(WorkflowEvent event) {
         Objects.requireNonNull(event, "event");
         EventMessage original = event.message();

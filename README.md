@@ -8,7 +8,7 @@ The project is framework-neutral: it does not require Spring, a broker, Flyway, 
 
 jworkflow is at MVP status. PostgreSQL implementation and acceptance gates are complete for fresh deployments on the tested server/JDK matrix described below. Local verification includes ordinary SQLite/in-memory regressions, real PostgreSQL concurrency and migration contracts, and a separate-JVM restart example. Hosted CI results are reported separately from these local runs.
 
-The project remains `0.1.0-SNAPSHOT`. Maven Central release preparation still includes public API Javadoc completion, release-version/API review, signing, and release-bundle validation. Generated source and Javadoc JARs do not imply that a release has been published.
+The project remains `0.1.0-SNAPSHOT`. Maven Central release preparation still includes release-version/API review, signing, and release-bundle validation. Generated source and Javadoc JARs do not imply that a release has been published.
 
 For a runnable PostgreSQL walkthrough, see the [environment-configured restart demonstration](jworkflow-example/README.md#postgresql-restart-demonstration).
 
@@ -79,6 +79,8 @@ mvn package
 ```
 
 Each module's `target/` directory contains its main JAR, `-sources.jar`, and `-javadoc.jar`. The source and Javadoc artifacts are also attached automatically during `install` and `deploy`.
+
+The published-source APIs include type, constructor, method, record-component, enum-value, and package documentation. Javadoc generation enables all DocLint checks and fails on warnings; `mvn -B -ntp clean verify` runs the tests and checks these attachments. To browse a module's generated API reference, open `target/reports/apidocs/index.html` in that module after the build.
 
 Install the current snapshots into Maven Local for use by another local project:
 

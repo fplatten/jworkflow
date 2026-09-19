@@ -13,6 +13,10 @@ import org.jworkflow.example.domain.Order;
 import java.time.Instant;
 import java.util.Map;
 
+/**
+ * Translates application command results to integration events without exposing workflow types to the domain
+ * model.
+ */
 final class OrderWorkflowEventMapper {
     private static final String TEXT_ORDER_ID = "orderId";
     Order toOrder(WorkflowEvent event) {

@@ -8,11 +8,18 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.Optional;
 
+/**
+ * JDBC replay-result repository using the bundle's connection and database strategy. Expected duplicate inserts
+ * return the validated stored winner; unrelated SQL failures are not swallowed.
+ */
 final class JdbcCommandResultRepository implements CommandResultRepository {
     private final JdbcConnectionFactory connections;
         private final JdbcJsonCodec json=new JdbcJsonCodec();
     JdbcCommandResultRepository(JdbcConnectionFactory connections){this.connections=connections;
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public CommandResultRecord save(CommandResultRecord value){
         String sql=connections.strategy().insertIgnoringDuplicate("insert into workflow_command_result (idempotency_key,command_type,request_hash,workflow_instance_id,result_json,created_at) values (?,?,?,?,?,?)","idempotency_key");
         try(Connection c=connections.open();
@@ -32,6 +39,9 @@ final class JdbcCommandResultRepository implements CommandResultRepository {
     }catch(SQLException x){
         throw new WorkflowInfrastructureException("Failed to save command result",x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<CommandResultRecord> find(String key){
         try(Connection c=connections.open()){return find(c,key);}
         catch(SQLException x){throw new WorkflowInfrastructureException("Failed to load command result",x);}

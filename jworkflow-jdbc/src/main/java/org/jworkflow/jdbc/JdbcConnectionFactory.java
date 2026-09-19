@@ -14,6 +14,11 @@ import java.util.Properties;
 import java.util.Objects;
 import javax.sql.DataSource;
 
+/**
+ * Shared JDBC connection and strategy boundary. A host DataSource takes precedence over Driver/URL credentials and
+ * remains host-owned. Physical borrows validate database metadata and close on setup failure. Repository borrows
+ * join the adapter's thread-bound connection; unrelated host transactions are not enlisted.
+ */
 final class JdbcConnectionFactory {
     private final String jdbcUrl;
     private final String username;

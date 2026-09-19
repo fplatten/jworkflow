@@ -9,9 +9,25 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.BiPredicate;
 
+/**
+ * Evaluates declarative branch comparisons and explicitly registered predicates. Predicate code remains
+ * application-owned and may execute inside a workflow transaction.
+ */
 public final class BranchConditionEvaluator {
+    /** Creates an evaluator with no registered host predicates. */
+    public BranchConditionEvaluator() {
+    }
+
     private final ConcurrentMap<String, BiPredicate<Map<String, Object>, Map<String, Object>>> predicates = new ConcurrentHashMap<>();
 
+    /**
+     * Registers a named host predicate and returns this evaluator for configuration.
+     * @param name name used to invoke this registered predicate
+     * @param predicate host predicate invoked with workflow variables and configured arguments
+     * @return the resulting branch condition evaluator
+     * @throws NullPointerException if predicate is null
+     * @throws IllegalArgumentException if the supplied values violate the operation's constraints
+     */
     public BranchConditionEvaluator registerPredicate(
             String name,
             BiPredicate<Map<String, Object>, Map<String, Object>> predicate
@@ -23,6 +39,13 @@ public final class BranchConditionEvaluator {
         return this;
     }
 
+    /**
+     * Evaluates the configured variable comparison or named predicate against the supplied variables.
+     * @param condition declarative comparison or named predicate
+     * @param variables workflow variable values; durable values must follow the supported JSON value model
+     * @return true when the condition described above holds; false otherwise
+     * @throws NullPointerException if condition is null
+     */
     public boolean evaluate(BranchCondition condition, Map<String, Object> variables) {
         Objects.requireNonNull(condition, "condition");
         Map<String, Object> safeVariables = variables == null ? Map.of() : Map.copyOf(variables);

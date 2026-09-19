@@ -12,13 +12,22 @@ import java.util.Map;
 /** PostgreSQL connection, schema and relational-value policy. */
 final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
     private final int commandLockTimeoutMs;
+    /**
+     * {@inheritDoc}
+     */
     @Override public int executeDuplicateInsert(JdbcConnectionFactory factory,Connection connection,PreparedStatement statement,
                                                String primaryConstraint,JdbcDuplicateInsert.Winner winner) throws SQLException {
         return JdbcDuplicateInsert.execute(factory,connection,statement,primaryConstraint,winner);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void requireLegacyClaimSupport(){
         throw new UnsupportedOperationException("PostgreSQL completion requires the token-aware lease API");
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public String claimBatchSql(JdbcLeaseSupport.Queue queue,String columns){
         return "with candidates as (select id from "+queue.table+" where "+queue.eligible()
                 +" order by "+queue.order+" limit ? for update skip locked), acquired as (update "+queue.table
@@ -26,6 +35,9 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
                 +(queue.timer?",updated_at=?":"")+" from candidates c where q.id=c.id returning q.*) select "+columns
                 +" from acquired order by "+queue.order;
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public String releaseClaimsSql(JdbcLeaseSupport.Queue queue){
         return "with expired as (select id from "+queue.table+" where status_value='CLAIMED' and claim_until<=?"
                 +" order by claim_until,id limit 1000 for update skip locked) update "+queue.table
@@ -33,6 +45,9 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
                 +(queue.timer?",updated_at=?":"")+" from expired e where q.id=e.id";
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void lockCommand(Connection connection, String key) throws SQLException {
         if (connection.getAutoCommit()) throw new SQLException("Command lock requires a transaction");
         String schema;
@@ -76,6 +91,9 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public long nextEventSequence(Connection connection, String instanceId) throws SQLException {
         try (var statement = connection.prepareStatement("""
                 insert into workflow_event_sequence(workflow_instance_id,last_sequence) values (?,1)
@@ -89,12 +107,21 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
             }
         }
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public String encodeIdempotencyKey(String value) {
         return value == null ? null : value.replace("%", "%25").replace("\u0000", "%00");
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public String decodeIdempotencyKey(String value) {
         return value == null ? null : value.replace("%00", "\u0000").replace("%25", "%");
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void beforeCommit(Connection connection) throws SQLException {
         // PostgreSQL COMMIT on an aborted transaction can return ROLLBACK without an error.
         // Detect an error swallowed by caller code before declaring success or delivering observers.
@@ -118,29 +145,50 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowEngine.Type type() { return WorkflowEngine.Type.POSTGRESQL; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void configure(Connection connection) {
         // Credentials, schema, TLS and pooling belong to the host; no SQLite operations.
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void initializeSchema(JdbcConnectionFactory factory) {
         PostgresqlSchemaInitializer.initialize(factory);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void bindInstant(PreparedStatement statement, int index, Instant value) throws SQLException {
         if (value == null) statement.setNull(index, Types.NUMERIC);
         else statement.setBigDecimal(index, PostgresqlInstantCodec.encode(value));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Instant readInstant(ResultSet rows, String column) throws SQLException {
         return PostgresqlInstantCodec.decode(rows.getBigDecimal(column));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Instant readInstant(ResultSet rows, int column) throws SQLException {
         return PostgresqlInstantCodec.decode(rows.getBigDecimal(column));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public int binaryNullType() { return Types.BINARY; }
 
 }

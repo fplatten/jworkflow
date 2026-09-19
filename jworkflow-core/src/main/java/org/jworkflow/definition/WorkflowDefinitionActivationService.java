@@ -21,10 +21,22 @@ public final class WorkflowDefinitionActivationService {
     private final DefinitionValidator validator;
     private final Clock clock;
 
+    /**
+     * Constructs WorkflowDefinitionActivationService with the supplied collaborators and configuration.
+     * @param registry registry retaining activated workflow definitions
+     */
     public WorkflowDefinitionActivationService(WorkflowDefinitionRegistry registry) {
         this(registry, new GroovyWorkflowDslCompiler(), new DefinitionValidator(), Clock.systemUTC());
     }
 
+    /**
+     * Constructs WorkflowDefinitionActivationService with the supplied collaborators and configuration.
+     * @param registry registry retaining activated workflow definitions
+     * @param compiler restricted Groovy DSL compiler
+     * @param validator workflow graph validator
+     * @param clock clock used for recorded times and lease/retry decisions
+     * @throws NullPointerException if registry, compiler, validator, clock is null
+     */
     public WorkflowDefinitionActivationService(WorkflowDefinitionRegistry registry,
                                                GroovyWorkflowDslCompiler compiler,
                                                DefinitionValidator validator,
@@ -35,6 +47,13 @@ public final class WorkflowDefinitionActivationService {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * Compiles and validates candidates, retaining last-known-good registry state for each rejected candidate.
+     *  Results report rejection without requiring an exception.
+     * @param source source provider to load and activate
+     * @return the matching values in the order defined by this operation
+     * @throws NullPointerException if source is null
+     */
     public List<DefinitionActivationResult> activate(WorkflowDefinitionSource source) {
         Objects.requireNonNull(source, "source");
         List<WorkflowDefinitionText> candidates = source.load();
@@ -43,6 +62,13 @@ public final class WorkflowDefinitionActivationService {
         return List.copyOf(results);
     }
 
+    /**
+     * Compiles and validates candidates, retaining last-known-good registry state for each rejected candidate.
+     * Results report rejection without requiring an exception.
+     * @param candidate source candidate to compile and validate
+     * @return the resulting definition activation result
+     * @throws NullPointerException if candidate is null
+     */
     public DefinitionActivationResult activate(WorkflowDefinitionText candidate) {
         Objects.requireNonNull(candidate, "candidate");
         WorkflowDefinitionSourceMetadata metadata = metadata(candidate);
@@ -62,6 +88,11 @@ public final class WorkflowDefinitionActivationService {
         }
     }
 
+    /**
+     * Activates loaded candidates and throws a structured activation exception when a candidate is rejected.
+     * @param source source provider to load and activate
+     * @return the matching values in the order defined by this operation
+     */
     public List<DefinitionActivationResult> activateOrThrow(WorkflowDefinitionSource source) {
         List<DefinitionActivationResult> results = activate(source);
         results.stream().filter(result -> !result.successful()).findFirst()

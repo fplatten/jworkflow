@@ -8,15 +8,39 @@ import java.util.*;
 
 /** Shared mechanics for the three fixed durable queues, including transaction poisoning on a stale guard. */
 final class JdbcLeaseSupport {
+    /**
+     * Fixed table, status and ordering metadata for timer, inbox and outbox claim SQL.
+     */
     enum Queue {
+        /**
+         * A durable timer schedule.
+         */
         TIMER("workflow_timer","'PENDING','RETRY_SCHEDULED'","coalesce(next_attempt_at,due_at)<=?","coalesce(next_attempt_at,due_at),created_at,id",true),
+        /**
+         * A durable incoming message.
+         */
         INBOX("workflow_inbox","'RECEIVED','RETRY_SCHEDULED'","(next_attempt_at is null or next_attempt_at<=?)","coalesce(next_attempt_at,received_at),received_at,id",false),
+        /**
+         * A durable outgoing publication.
+         */
         OUTBOX("workflow_outbox","'PENDING','RETRY_SCHEDULED'","(next_attempt_at is null or next_attempt_at<=?)","coalesce(next_attempt_at,created_at),created_at,id",false);
         final String table,ready,deadline,order;final boolean timer;
         Queue(String table,String ready,String deadline,String order,boolean timer){this.table=table;this.ready=ready;this.deadline=deadline;this.order=order;this.timer=timer;}
         String eligible(){return "("+deadline+" and ((status_value in ("+ready+") and (claim_until is null or claim_until<=?)) or (status_value='CLAIMED' and claim_until<=?)))";}
     }
-    @FunctionalInterface interface Mapper<T>{T map(ResultSet rows)throws SQLException;}
+    /**
+     * Maps claimed JDBC rows back to the corresponding immutable queue value.
+     * @param <T> the value type
+     */
+    @FunctionalInterface interface Mapper<T>{
+
+        /**
+         * Maps the current result row to the queue value without advancing or closing the result set.
+         * @param rows JDBC result positioned at the row to decode
+         * @return the value produced by the work
+         * @throws SQLException if the database operation fails
+         */
+        T map(ResultSet rows)throws SQLException;}
     private JdbcLeaseSupport(){ }
 
     static <T> List<T> claim(JdbcConnectionFactory factory,Queue queue,String columns,Mapper<T> mapper,Instant now,String owner,Instant until,int limit){

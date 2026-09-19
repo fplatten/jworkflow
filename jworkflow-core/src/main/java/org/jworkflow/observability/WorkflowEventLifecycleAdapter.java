@@ -8,6 +8,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Translates published workflow events into lifecycle observations for the configured observer.
+ */
 public final class WorkflowEventLifecycleAdapter implements EventPublisher {
     private static final Map<String, WorkflowLifecycleEventType> TYPES = Map.ofEntries(
             Map.entry("workflow.started", WorkflowLifecycleEventType.WORKFLOW_STARTED),
@@ -25,10 +28,18 @@ public final class WorkflowEventLifecycleAdapter implements EventPublisher {
 
     private final WorkflowLifecycleObserver observer;
 
+    /**
+     * Constructs WorkflowEventLifecycleAdapter with the supplied collaborators and configuration.
+     * @param observer best-effort lifecycle observer
+     * @throws NullPointerException if observer is null
+     */
     public WorkflowEventLifecycleAdapter(WorkflowLifecycleObserver observer) {
         this.observer = Objects.requireNonNull(observer, "observer");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void publish(WorkflowEvent event) {
         WorkflowLifecycleEventType type = TYPES.get(event.eventName().value());

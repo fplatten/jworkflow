@@ -45,14 +45,32 @@ public final class JdbcInboxApplication implements AutoCloseable {
         this.processing=new InboxProcessingService(persistence.inbox(),persistence.eventStatuses(),persistence.transactions(),translator,this::dispatch,clock);
             this.reprocessing=new InboxReprocessingService(persistence.inbox(),persistence.transactions());
     }
+    /**
+     * Applies capture policy and durably accepts the first arrival or returns the stored duplicate. Processing is
+     *  a separate operation.
+     * @param message durable incoming message envelope
+     * @return the stored message and whether this call inserted it
+     * @throws NullPointerException if message is null
+     */
     public InboxInsertResult accept(InboxMessage message){message=capture(Objects.requireNonNull(message));
         InboxMessage safe=message;
         return persistence.jdbcTransactions().inWriteTransaction(()->persistence.inbox().insertIfAbsent(safe));
     }
+    /**
+     * Accepts the envelope and polls one eligible batch when it was newly inserted; a poll may also process other
+     *  pending messages.
+     * @param message durable incoming message envelope
+     * @return the stored message and whether this call inserted it
+     */
     public InboxInsertResult acceptAndProcess(InboxMessage message){InboxInsertResult accepted=accept(message);
         if(accepted.inserted())pollOnce();
         return accepted;
     }
+    /**
+     * Releases expired leases, claims one bounded batch and processes each message. Ambiguous transaction failure
+     * pauses subsequent polling until the worker is reconciled and recreated.
+     * @return the number of items claimed in this batch
+     */
     public int pollOnce(){
         if(reconciliationRequired.get())throw new WorkflowInfrastructureException("Inbox polling paused: reconcile the failed transaction before recreating this worker",null);
         Instant now=clock.instant();
@@ -61,10 +79,18 @@ public final class JdbcInboxApplication implements AutoCloseable {
         for(InboxMessage message:claimed)process(message);
         return claimed.size();
     }
+    /**
+     * Schedules manual reprocessing, polls eligible work and returns the refreshed stored envelope.
+     * @param command command to validate and execute
+     * @return the resulting inbox message
+     */
     public InboxMessage reprocess(ReprocessInboxMessageCommand command){InboxMessage message=reprocessing.reprocess(command);
         pollOnce();
         return persistence.inbox().findById(message.messageId()).orElseThrow();
     }
+    /**
+     * Starts one owned daemon polling worker; repeated calls while started are ignored.
+     */
     public void start(){if(poller!=null)return;
         poller=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"jworkflow-jdbc-inbox-"+workerId.substring(0,8));
         t.setDaemon(true);
@@ -118,12 +144,27 @@ public final class JdbcInboxApplication implements AutoCloseable {
         }
         throw new InboxStateException("Unsupported inbox command: "+command.getClass().getName());
     }
+    /**
+     * Looks up a stored inbox envelope by message ID.
+     * @param id identity of the value to look up or update
+     * @return the matching value, or an empty optional when absent
+     */
     public Optional<InboxMessage> find(UUID id){return persistence.inbox().findById(id);
-    }public List<InboxAttempt> attempts(UUID id){return persistence.inbox().findAttempts(id);
+    }
+
+    /**
+     * Returns the message processing attempt history.
+     * @param id identity of the value to look up or update
+     * @return the matching values in the order defined by this operation
+     */
+    public List<InboxAttempt> attempts(UUID id){return persistence.inbox().findAttempts(id);
     }
     private InboxMessage capture(InboxMessage message){WorkflowEvent filtered=engine.capture(new WorkflowEvent(new EventMetadata(null,new EventName("inbox.received"),message.sourceSystem(),message.correlationId(),message.causationId(),null,null,null,null,"1",message.receivedAt(),message.receivedAt(),Map.of()),message.message()));
         return new InboxMessage(message.messageId(),message.externalEventId(),message.sourceSystem(),filtered.message(),filtered.metadata().correlationId(),filtered.metadata().causationId(),message.receivedAt(),message.processedAt(),message.status(),message.attemptCount(),message.nextAttemptAt(),message.lastError(),message.claimedBy(),message.claimUntil(),message.claimToken());
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close(){if(!closed.compareAndSet(false,true))return;
         if(poller!=null){poller.shutdown();
         try{if(!poller.awaitTermination(5,TimeUnit.SECONDS))poller.shutdownNow();

@@ -7,7 +7,13 @@ import org.jworkflow.observability.*;
 import java.time.Clock;
 import java.util.Objects;
 
-/** Publishes outside a transaction, then records the immutable attempt in a short transaction. */
+/**
+ * Publishes outside a transaction, then records the immutable attempt in a short transaction.
+ *
+ * <p>A send can succeed before recording fails, so delivery is at least once. Token guards protect the database
+ * attempt/status changes after a send, not the remote side effect. Publication cannot be nested in an outer
+ * adapter transaction. Receivers must deduplicate stable message identities.</p>
+ */
 public final class OutboxPublisherService {
     private static final String TEXT_PUBLICATION_FAILED = "publication_failed";
     private final OutboxRepository outbox;
@@ -17,8 +23,28 @@ public final class OutboxPublisherService {
         private final RetryBackoffPolicy retry;
         private final Clock clock;
     private final WorkflowLifecycleObserver observer;
+    /**
+     * Constructs OutboxPublisherService with the supplied collaborators and configuration.
+     * @param outbox durable publication-intent repository
+     * @param statuses append-only event-status repository
+     * @param transactions shared transaction manager coordinating related writes
+     * @param publisher destination or event publisher used by this adapter
+     * @param retry publication retry budget and backoff policy
+     * @param clock clock used for recorded times and lease/retry decisions
+     */
     public OutboxPublisherService(OutboxRepository outbox,EventStatusRepository statuses,WorkflowTransactionManager transactions,DestinationPublisher publisher,RetryBackoffPolicy retry,Clock clock){this(outbox,statuses,transactions,publisher,retry,clock,NoOpWorkflowLifecycleObserver.INSTANCE);
     }
+    /**
+     * Constructs OutboxPublisherService with the supplied collaborators and configuration.
+     * @param outbox durable publication-intent repository
+     * @param statuses append-only event-status repository
+     * @param transactions shared transaction manager coordinating related writes
+     * @param publisher destination or event publisher used by this adapter
+     * @param retry publication retry budget and backoff policy
+     * @param clock clock used for recorded times and lease/retry decisions
+     * @param observer best-effort lifecycle observer
+     * @throws NullPointerException if outbox, statuses, transactions, publisher, retry, clock, observer is null
+     */
     public OutboxPublisherService(OutboxRepository outbox,EventStatusRepository statuses,WorkflowTransactionManager transactions,DestinationPublisher publisher,RetryBackoffPolicy retry,Clock clock,WorkflowLifecycleObserver observer){this.outbox=Objects.requireNonNull(outbox);
         this.statuses=Objects.requireNonNull(statuses);
         this.transactions=Objects.requireNonNull(transactions);
@@ -27,6 +53,13 @@ public final class OutboxPublisherService {
         this.clock=Objects.requireNonNull(clock);
         this.observer=SafeWorkflowLifecycleObserver.isolate(Objects.requireNonNull(observer));
     }
+    /**
+     * Validates a claim, sends outside the transaction and records the attempt under a final token guard.
+     * Recording failure after send may cause redelivery.
+     * @param claimed message returned by lease acquisition, including its generation token
+     * @param owner worker identity that acquired the lease
+     * @return the resulting outbox message
+     */
     public OutboxMessage publish(OutboxMessage claimed,String owner){if(claimed.status()!=OutboxMessageStatus.CLAIMED||!Objects.equals(owner,claimed.claimedBy()))throw new OutboxClaimException("Outbox message is not claimed by "+owner+": "+claimed.messageId());
         if(transactions.isTransactionActive())throw new IllegalStateException("Outbox publication must run outside an enclosing transaction");
         transactions.execute(()->outbox.requireClaim(claimed.messageId(),owner,claimed.claimToken()));

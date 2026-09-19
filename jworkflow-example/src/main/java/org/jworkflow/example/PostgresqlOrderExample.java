@@ -18,6 +18,7 @@ public final class PostgresqlOrderExample {
      * Runs init, start, resume, publish, or status in a pre-created dedicated schema.
      * @param args exactly one phase name
      * @throws Exception if configuration or persistence fails
+     * @throws IllegalArgumentException if the supplied values violate the operation's constraints
      */
     public static void main(String[] args) throws Exception {
         if (args.length != 1 || !List.of("init", "start", "resume", "publish", "status").contains(args[0])) {

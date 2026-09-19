@@ -45,6 +45,11 @@ public final class JdbcOutboxApplication implements AutoCloseable {
         publisher=new OutboxPublisherService(persistence.outbox(),persistence.eventStatuses(),persistence.transactions(),routed,retry,clock,observer);
             republishing=new OutboxRepublishingService(persistence.outbox(),persistence.transactions());
         }
+    /**
+     * Releases expired leases and publishes one bounded claimed batch. Rejects an enclosing transaction so network
+     * sends occur outside database transactions.
+     * @return the number of items claimed in this batch
+     */
     public int pollOnce(){
         if(persistence.transactions().isTransactionActive())throw new IllegalStateException("Outbox polling requires its own transaction boundaries");
         Instant now=clock.instant();
@@ -53,13 +58,34 @@ public final class JdbcOutboxApplication implements AutoCloseable {
         for(OutboxMessage message:claimed)publisher.publish(message,workerId);
         return claimed.size();
     }
+    /**
+     * Schedules manual republication, polls eligible work and returns the refreshed stored envelope. Receivers may
+     * observe another delivery.
+     * @param command command to validate and execute
+     * @return the resulting outbox message
+     */
     public OutboxMessage republish(RepublishOutboxMessageCommand command){OutboxMessage message=republishing.republish(command);
         pollOnce();
         return persistence.outbox().findById(message.messageId()).orElseThrow();
     }
+    /**
+     * Looks up a stored outbox envelope by message ID.
+     * @param id identity of the value to look up or update
+     * @return the matching value, or an empty optional when absent
+     */
     public Optional<OutboxMessage> find(UUID id){return persistence.outbox().findById(id);
-    }public List<OutboxAttempt> attempts(UUID id){return persistence.outbox().findAttempts(id);
     }
+
+    /**
+     * Returns the publication attempt history.
+     * @param id identity of the value to look up or update
+     * @return the matching values in the order defined by this operation
+     */
+    public List<OutboxAttempt> attempts(UUID id){return persistence.outbox().findAttempts(id);
+    }
+    /**
+     * Starts one owned daemon polling worker; repeated calls while started are ignored.
+     */
     public void start(){if(poller!=null)return;
         poller=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"jworkflow-jdbc-outbox-"+workerId.substring(0,8));
         t.setDaemon(true);
@@ -71,6 +97,9 @@ public final class JdbcOutboxApplication implements AutoCloseable {
     }catch(RuntimeException ignored){
             // Durable claims remain retryable; the next scheduled poll will try again.
         }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close(){if(!closed.compareAndSet(false,true))return;
         if(poller!=null){poller.shutdown();
         try{if(!poller.awaitTermination(5,TimeUnit.SECONDS))poller.shutdownNow();

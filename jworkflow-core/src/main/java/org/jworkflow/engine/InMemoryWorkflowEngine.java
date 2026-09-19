@@ -28,6 +28,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
+/**
+ * In-memory engine with process-local instances, timers and replay state. Published events are queued for local
+ * dispatch and may start declared workflows. Optional persistence hooks do not turn this mode into the JDBC
+ * durable engine. Close stops owned executor work; process restart does not restore the in-memory runtime.
+ */
 public final class InMemoryWorkflowEngine implements WorkflowEngine {
     private static final String TEXT_EVENT_CORRELATED = "event.correlated";
     private static final String TEXT_COMMAND = "command";
@@ -91,6 +96,10 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * Creates an instance with its built-in default collaborators and configuration.
+     * @return the configured process-local engine; the caller must close it
+     */
     public static InMemoryWorkflowEngine createDefault() {
         return new InMemoryWorkflowEngine(
                 new WorkflowDefinitionRegistry(),
@@ -102,14 +111,35 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 null, Clock.systemUTC(), CaptureAllEventPolicy.INSTANCE);
     }
 
+    /**
+     * Creates a process-local engine using the supplied collaborators and UTC clock. Omitted publishers, handlers,
+     *  listeners and persistence hooks use the built-in defaults; the caller must close the engine.
+     * @param definitions registry of selected workflow definitions
+     * @return the configured process-local engine; the caller must close it
+     */
     public static InMemoryWorkflowEngine create(WorkflowDefinitionRegistry definitions) {
         return new InMemoryWorkflowEngine(definitions, NoOpEventPublisher.INSTANCE, Map.of(), new BranchConditionEvaluator(), Map.of(), Map.of(), null, Clock.systemUTC(), CaptureAllEventPolicy.INSTANCE);
     }
 
+    /**
+     * Creates a process-local engine using the supplied collaborators and UTC clock. Omitted publishers, handlers,
+     *  listeners and persistence hooks use the built-in defaults; the caller must close the engine.
+     * @param definitions registry of selected workflow definitions
+     * @param eventPublisher host event sink; publication guarantees depend on the supplied implementation
+     * @return the configured process-local engine; the caller must close it
+     */
     public static InMemoryWorkflowEngine create(WorkflowDefinitionRegistry definitions, EventPublisher eventPublisher) {
         return new InMemoryWorkflowEngine(definitions, eventPublisher, Map.of(), new BranchConditionEvaluator(), Map.of(), Map.of(), null, Clock.systemUTC(), CaptureAllEventPolicy.INSTANCE);
     }
 
+    /**
+     * Creates a process-local engine using the supplied collaborators and UTC clock. Omitted publishers, handlers,
+     *  listeners and persistence hooks use the built-in defaults; the caller must close the engine.
+     * @param definitions registry of selected workflow definitions
+     * @param eventPublisher host event sink; publication guarantees depend on the supplied implementation
+     * @param stepHandlers handlers indexed by declared action name
+     * @return the configured process-local engine; the caller must close it
+     */
     public static InMemoryWorkflowEngine create(
             WorkflowDefinitionRegistry definitions,
             EventPublisher eventPublisher,
@@ -118,6 +148,15 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return new InMemoryWorkflowEngine(definitions, eventPublisher, stepHandlers, new BranchConditionEvaluator(), Map.of(), Map.of(), null, Clock.systemUTC(), CaptureAllEventPolicy.INSTANCE);
     }
 
+    /**
+     * Creates a process-local engine using the supplied collaborators and UTC clock. Omitted publishers, handlers,
+     *  listeners and persistence hooks use the built-in defaults; the caller must close the engine.
+     * @param definitions registry of selected workflow definitions
+     * @param eventPublisher host event sink; publication guarantees depend on the supplied implementation
+     * @param stepHandlers handlers indexed by declared action name
+     * @param branchConditionEvaluator declarative condition evaluator and registered predicates
+     * @return the configured process-local engine; the caller must close it
+     */
     public static InMemoryWorkflowEngine create(
             WorkflowDefinitionRegistry definitions,
             EventPublisher eventPublisher,
@@ -127,6 +166,17 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return new InMemoryWorkflowEngine(definitions, eventPublisher, stepHandlers, branchConditionEvaluator, Map.of(), Map.of(), null, Clock.systemUTC(), CaptureAllEventPolicy.INSTANCE);
     }
 
+    /**
+     * Creates a process-local engine using the supplied collaborators and UTC clock. Omitted publishers, handlers,
+     *  listeners and persistence hooks use the built-in defaults; the caller must close the engine.
+     * @param definitions registry of selected workflow definitions
+     * @param eventPublisher host event sink; publication guarantees depend on the supplied implementation
+     * @param stepHandlers handlers indexed by declared action name
+     * @param branchConditionEvaluator declarative condition evaluator and registered predicates
+     * @param workflowStartEvents mapping from event names to workflows started in supported runtime modes
+     * @param listenerInstances infrastructure listeners indexed by registered identity
+     * @return the configured process-local engine; the caller must close it
+     */
     public static InMemoryWorkflowEngine create(
             WorkflowDefinitionRegistry definitions,
             EventPublisher eventPublisher,
@@ -138,6 +188,18 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return new InMemoryWorkflowEngine(definitions, eventPublisher, stepHandlers, branchConditionEvaluator, workflowStartEvents, listenerInstances, null, Clock.systemUTC(), CaptureAllEventPolicy.INSTANCE);
     }
 
+    /**
+     * Creates a process-local engine using the supplied collaborators and UTC clock. Omitted publishers, handlers,
+     *  listeners and persistence hooks use the built-in defaults; the caller must close the engine.
+     * @param definitions registry of selected workflow definitions
+     * @param eventPublisher host event sink; publication guarantees depend on the supplied implementation
+     * @param stepHandlers handlers indexed by declared action name
+     * @param branchConditionEvaluator declarative condition evaluator and registered predicates
+     * @param workflowStartEvents mapping from event names to workflows started in supported runtime modes
+     * @param listenerInstances infrastructure listeners indexed by registered identity
+     * @param persistence repository bundle sharing a transaction boundary
+     * @return the configured process-local engine; the caller must close it
+     */
     public static InMemoryWorkflowEngine create(
             WorkflowDefinitionRegistry definitions,
             EventPublisher eventPublisher,
@@ -151,6 +213,19 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 workflowStartEvents, listenerInstances, persistence, Clock.systemUTC(), CaptureAllEventPolicy.INSTANCE);
     }
 
+    /**
+     * Creates a process-local engine using the supplied collaborators and UTC clock. Omitted publishers, handlers,
+     *  listeners and persistence hooks use the built-in defaults; the caller must close the engine.
+     * @param definitions registry of selected workflow definitions
+     * @param eventPublisher host event sink; publication guarantees depend on the supplied implementation
+     * @param stepHandlers handlers indexed by declared action name
+     * @param branchConditionEvaluator declarative condition evaluator and registered predicates
+     * @param workflowStartEvents mapping from event names to workflows started in supported runtime modes
+     * @param listenerInstances infrastructure listeners indexed by registered identity
+     * @param persistence repository bundle sharing a transaction boundary
+     * @param eventCapturePolicy policy applied before durable or observable event boundaries
+     * @return the configured process-local engine; the caller must close it
+     */
     @SuppressWarnings("java:S107") // Compatibility factory retained for existing clients.
     public static InMemoryWorkflowEngine create(WorkflowDefinitionRegistry definitions, EventPublisher eventPublisher,
             Map<String, StepHandler> stepHandlers, BranchConditionEvaluator branchConditionEvaluator,
@@ -166,6 +241,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return new InMemoryWorkflowEngine(definitions, publisher, handlers, conditions, starts, listeners, null, clock, CaptureAllEventPolicy.INSTANCE);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void publish(WorkflowEvent event) {
         Objects.requireNonNull(event, "event");
@@ -176,6 +254,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         ensureEventLoopStarted();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void registerListener(String listenerId, Object listener) {
         if (listenerId == null || listenerId.isBlank()) {
@@ -184,17 +265,26 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         listenerInstances.put(listenerId, Objects.requireNonNull(listener, "listener"));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public Executor contextAwareExecutor(Executor delegate) {
         Objects.requireNonNull(delegate, "delegate");
         return command -> delegate.execute(WorkflowExecutionContext.capture().wrap(command));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public WorkflowEngineContext context() {
         return context;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void close() {
         if (running.compareAndSet(true, false)) {
@@ -326,6 +416,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 .toList();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public StartWorkflowResult start(StartWorkflowCommand command) {
         Objects.requireNonNull(command, TEXT_COMMAND);
@@ -385,6 +478,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public WorkflowCommandResult signal(SignalWorkflowCommand command) {
         Objects.requireNonNull(command, TEXT_COMMAND);
@@ -420,6 +516,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return snapshot;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public WorkflowCommandResult retryFailedStep(RetryFailedStepCommand command) {
         Objects.requireNonNull(command, TEXT_COMMAND);
@@ -443,6 +542,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public WorkflowCommandResult cancel(CancelWorkflowCommand command) {
         Objects.requireNonNull(command, TEXT_COMMAND);
@@ -470,6 +572,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public WorkflowCommandResult resume(ResumeWorkflowCommand command) {
         Objects.requireNonNull(command, TEXT_COMMAND);
@@ -499,11 +604,17 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return result;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public WorkflowSnapshot snapshot(WorkflowInstanceId instanceId) {
         return requireInstance(instanceId);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public WorkflowSnapshot snapshot(String workflowKey, String businessKey) {
         WorkflowInstanceId instanceId = instancesByBusinessKey.get(instanceKey(workflowKey, businessKey));
@@ -513,12 +624,22 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return snapshot(instanceId);
     }
 
+    /**
+     * Returns the currently scheduled process-local timers.
+     * @return the matching values in the order defined by this operation
+     */
     public List<WorkflowTimer> pendingTimers() {
         return timers.stream()
                 .filter(timer -> timer.status() == WorkflowTimerStatus.PENDING)
                 .toList();
     }
 
+    /**
+     * Fires process-local timers due at the supplied instant; no durable lease is acquired.
+     * @param now clock instant used for eligibility or retry calculation
+     * @return the matching values in the order defined by this operation
+     * @throws NullPointerException if now is null
+     */
     public List<WorkflowTimer> fireDueTimers(Instant now) {
         Objects.requireNonNull(now, "now");
         ArrayList<WorkflowTimer> fired = new ArrayList<>();
@@ -1482,7 +1603,13 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 EventMessage.empty());
     }
 
+    /**
+     * Names engine-owned worker threads used for local event processing.
+     */
     private static final class WorkflowThreadFactory implements ThreadFactory {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public Thread newThread(Runnable runnable) {
             Thread thread = new Thread(runnable, "jworkflow-events");
@@ -1733,9 +1860,20 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return new IdempotencyFingerprint(idempotencyKey, command.instanceId().toString());
     }
 
+    /**
+     * Complete command key and request fingerprint used for in-process replay validation.
+     * @param idempotencyKey complete replay/deduplication key; retain the same key when reconciling an uncertain
+     *     outcome
+     * @param payloadFingerprint the payload fingerprint
+     */
     private record IdempotencyFingerprint(String idempotencyKey, String payloadFingerprint) {
     }
 
+    /**
+     * Original in-process command result paired with its validated fingerprint.
+     * @param fingerprint the fingerprint
+     * @param result result data associated with the operation
+     */
     private record IdempotentResult(IdempotencyFingerprint fingerprint, Object result) {
         private void requireSameFingerprint(IdempotencyFingerprint candidate) {
             if (!fingerprint.payloadFingerprint().equals(candidate.payloadFingerprint())) {
@@ -1744,23 +1882,46 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         }
     }
 
+    /**
+     * Next loop target and variable updates calculated during local execution.
+     * @param targetNode node to enter after the transition
+     * @param variables workflow variable values; durable values must follow the supported JSON value model
+     */
     private record LoopRoute(String targetNode, Map<String, Object> variables) {
     }
 
+    /**
+     * Child-workflow continuation target, event and variable updates.
+     * @param targetNode node to enter after the transition
+     * @param eventName event name matched by workflow transitions or subscribers
+     * @param variables workflow variable values; durable values must follow the supported JSON value model
+     */
     private record SubWorkflowRoute(String targetNode, EventName eventName, Map<String, Object> variables) {
     }
 
+    /**
+     * Snapshot-only view over this engine's process-local instances.
+     */
     private final class InMemoryWorkflowEngineContext implements WorkflowEngineContext {
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public List<WorkflowSnapshot> getWorkflows() {
             return List.copyOf(instances.values());
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public java.util.Optional<WorkflowSnapshot> getWorkflow(WorkflowInstanceId instanceId) {
             return java.util.Optional.ofNullable(instances.get(instanceId));
         }
 
+        /**
+         * {@inheritDoc}
+         */
         @Override
         public java.util.Optional<WorkflowSnapshot> getWorkflow(String workflowKey, String businessKey) {
             WorkflowInstanceId instanceId = instancesByBusinessKey.get(instanceKey(workflowKey, businessKey));

@@ -1,10 +1,22 @@
 package org.jworkflow.persistence;
 
 
+/**
+ * Framework-neutral transaction and optional after-commit synchronization boundary. JDBC nested work joins one
+ * thread-bound connection and rollback-only state. Custom managers retaining the default synchronization methods
+ * dispatch observations immediately; override both capability and dispatch methods for outer-commit timing.
+ */
 public interface WorkflowTransactionManager {
+    /**
+     * Runs work under the implementation's atomic commit/rollback boundary.
+     * @param transaction unit of work to commit atomically or roll back
+     */
     void execute(WorkflowTransaction transaction);
 
-    /** Whether the calling thread is inside this manager's transaction. Custom managers should override. */
+    /**
+     * Whether the calling thread is inside this manager's transaction. Custom managers should override.
+     * @return true when the condition described above holds; false otherwise
+     */
     default boolean isTransactionActive(){return false;}
 
     /**
@@ -17,9 +29,10 @@ public interface WorkflowTransactionManager {
 
     /**
      * Runs a best-effort notification, or queues it when a synchronizing manager has an active transaction.
-     * Synchronizing implementations discard queued callbacks on rollback or an unsuccessful commit.
-     * This compatibility default dispatches immediately; it cannot observe custom transaction ownership.
+     *  Synchronizing implementations discard queued callbacks on rollback or an unsuccessful commit.
+     *  This compatibility default dispatches immediately; it cannot observe custom transaction ownership.
      * @param notification notification to dispatch
+     * @throws NullPointerException if notification is null
      */
     default void afterCommit(Runnable notification) {
         java.util.Objects.requireNonNull(notification, "notification");
@@ -40,6 +53,14 @@ public interface WorkflowTransactionManager {
                 "Transaction completion notification or resource cleanup failed");
     }
 
+    /**
+     * Returns the work result after the manager accepts completion. JDBC implementations join nested work and
+     * propagate rollback-only state; this compatibility default delegates to execute.
+     * @param <T> the result type
+     * @param work work executed inside the transaction boundary
+     * @return the work result after the manager accepts completion
+     * @throws NullPointerException if work is null
+     */
     default <T> T inTransaction(WorkflowTransactionalWork<T> work) {
         java.util.Objects.requireNonNull(work, "work");
         java.util.concurrent.atomic.AtomicReference<T> result = new java.util.concurrent.atomic.AtomicReference<>();

@@ -18,15 +18,30 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Deterministic, versioned JSON codec shared by all JDBC repositories. */
+/**
+ * Deterministic, versioned JSON codec shared by all JDBC repositories.
+ *
+ * <p>Uses a version-1 JSON envelope and deterministic property ordering. Values are limited to supported JSON data
+ * and explicitly mapped domain records, not Java object serialization. Non-empty legacy Map.toString data is
+ * rejected because it cannot be decoded losslessly.</p>
+ */
 public final class JdbcJsonCodec {
     private static final String TEXT_FORMAT = "format";
     private static final String TEXT_VALUE = "value";
+    /**
+     * Stable marker identifying the persisted jworkflow JSON envelope.
+     */
     public static final String FORMAT = "jworkflow-json";
+    /**
+     * Current persisted JSON envelope version.
+     */
     public static final int VERSION = 1;
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
     private final ObjectMapper mapper;
 
+    /**
+     * Constructs JdbcJsonCodec with its default configuration.
+     */
     public JdbcJsonCodec() {
         mapper = JsonMapper.builder()
                 .addModule(new JavaTimeModule())
@@ -37,6 +52,11 @@ public final class JdbcJsonCodec {
                 .build();
     }
 
+    /**
+     * Encodes a supported value in the deterministic versioned JSON envelope; unsupported values fail explicitly.
+     * @param value the value to encode or copy
+     * @return the resulting text
+     */
     public String write(Object value) {
         Object safe = validateAndCopy(value, "$", true);
         LinkedHashMap<String, Object> envelope = new LinkedHashMap<>();
@@ -50,15 +70,30 @@ public final class JdbcJsonCodec {
         }
     }
 
+    /**
+     * Encodes the versioned JSON envelope as UTF-8 bytes.
+     * @param value the value to encode or copy
+     * @return the resulting bytes
+     */
     public byte[] writeUtf8(Object value) {
         return write(value).getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * Decodes versioned JSON into the requested model and rejects incompatible or lossy legacy representations.
+     * @param json versioned JSON representation to decode
+     * @return the resulting object
+     */
     public Object read(String json) {
         Map<String, Object> envelope = parseEnvelope(json);
         return immutableJson(envelope.get(TEXT_VALUE));
     }
 
+    /**
+     * Decodes a versioned JSON object and rejects non-map values.
+     * @param json versioned JSON representation to decode
+     * @return the resulting key/value mapping
+     */
     @SuppressWarnings("unchecked")
     public Map<String, Object> readMap(String json) {
         Object value = read(json);
@@ -68,6 +103,12 @@ public final class JdbcJsonCodec {
         return (Map<String, Object>) map;
     }
 
+    /**
+     * Reads versioned or supported legacy JSON maps. Null, blank and empty-object input yield an empty map; lossy
+     * map-toString data is rejected.
+     * @param persisted whether the observation describes durable state
+     * @return the resulting key/value mapping
+     */
     public Map<String, Object> readPersistedMap(String persisted) {
         if (persisted == null || persisted.isBlank() || "{}".equals(persisted.trim())) return Map.of();
         String trimmed = persisted.trim();
@@ -84,6 +125,13 @@ public final class JdbcJsonCodec {
         }
     }
 
+    /**
+     * Decodes versioned JSON into the requested model and rejects incompatible or lossy legacy representations.
+     * @param <T> the result type
+     * @param json versioned JSON representation to decode
+     * @param type target Java type supported by the persisted codec
+     * @return the value produced by the work
+     */
     public <T> T read(String json, Class<T> type) {
         Object value = parseEnvelope(json).get(TEXT_VALUE);
         try {
@@ -93,7 +141,11 @@ public final class JdbcJsonCodec {
         }
     }
 
-    /** Binary payloads use SQLite BLOB/PostgreSQL bytea and never pass through JSON or character encodings. */
+    /**
+     * Binary payloads use SQLite BLOB/PostgreSQL bytea and never pass through JSON or character encodings.
+     * @param payload supported event body; null denotes an absent body
+     * @return the resulting bytes
+     */
     public byte[] copyBinary(byte[] payload) {
         return payload == null ? null : payload.clone();
     }

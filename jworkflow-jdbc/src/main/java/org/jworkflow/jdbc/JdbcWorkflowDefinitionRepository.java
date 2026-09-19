@@ -16,12 +16,19 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * JDBC immutable definition storage and exact-revision lookup. Expected duplicate identities validate stored
+ * content without leaving PostgreSQL transactions aborted.
+ */
 final class JdbcWorkflowDefinitionRepository implements WorkflowDefinitionRepository {
     private final JdbcConnectionFactory connections;
     private final JdbcDefinitionCodec codec = new JdbcDefinitionCodec();
 
     JdbcWorkflowDefinitionRepository(JdbcConnectionFactory connections) { this.connections = Objects.requireNonNull(connections); }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void save(WorkflowDefinition definition) {
         String canonical = codec.write(definition);
         String revision = definition.revision();
@@ -46,14 +53,23 @@ final class JdbcWorkflowDefinitionRepository implements WorkflowDefinitionReposi
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<WorkflowDefinition> find(String name, String version) {
         return queryOne("select canonical_json,checksum from workflow_definition where workflow_key=? and workflow_version=? order by created_at desc,workflow_revision desc limit 1", name, version);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<WorkflowDefinition> findRevision(String name, String version, String revision) {
         return queryOne("select canonical_json,checksum from workflow_definition where workflow_key=? and workflow_version=? and workflow_revision=?", name, version, revision);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowDefinition> findAll() {
         String sql = "select canonical_json,checksum from workflow_definition order by workflow_key,workflow_version,workflow_revision";
         try (Connection connection = connections.open(); PreparedStatement statement = connection.prepareStatement(sql); ResultSet rows = statement.executeQuery()) {
@@ -90,5 +106,11 @@ final class JdbcWorkflowDefinitionRepository implements WorkflowDefinitionReposi
             throw new PersistenceConstraintException("Immutable workflow definition identity already contains different content");
         }
     }
+    /**
+     * Stored definition data used to validate duplicate immutable content.
+     * @param canonical the canonical
+     * @param checksum the checksum
+     * @param id the identifier of the requested value
+     */
     private record Stored(String canonical,String checksum,String id) { }
 }

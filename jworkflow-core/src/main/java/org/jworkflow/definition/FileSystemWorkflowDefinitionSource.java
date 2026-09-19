@@ -10,13 +10,25 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
 
+/**
+ * Loads Groovy workflow sources from a configured filesystem root. Loading is an explicit operation, not a
+ * directory-watching service.
+ */
 public final class FileSystemWorkflowDefinitionSource implements WorkflowDefinitionSource {
     private final Path root;
 
+    /**
+     * Constructs FileSystemWorkflowDefinitionSource with the supplied collaborators and configuration.
+     * @param root filesystem root from which Groovy sources are discovered
+     * @throws NullPointerException if root is null
+     */
     public FileSystemWorkflowDefinitionSource(Path root) {
         this.root = Objects.requireNonNull(root, "root");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<WorkflowDefinitionText> load() {
         if (!Files.exists(root)) {

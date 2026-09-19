@@ -6,10 +6,57 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
 
-/** Safe diagnostics; failed commits can have unknown outcomes. Does not imply automatic retry. */
+/**
+ * Safe diagnostics; failed commits can have unknown outcomes. Does not imply automatic retry.
+ *
+ * <p>Inspect category, SQLState, phase and commit-uncertainty flags rather than parsing localized messages.
+ * Reconcile uncertain outcomes using the original idempotency key. Underlying causes and suppressed cleanup
+ * failures are retained; diagnostic consumers must avoid logging secrets.</p>
+ */
 public final class JdbcTransactionException extends WorkflowPersistenceException {
-    public enum Category { CONSTRAINT, TIMEOUT, DEADLOCK, SERIALIZATION, CONNECTION, ABORTED, OTHER }
+    /**
+     * SQLState-based failure class for diagnostics and explicit caller reconciliation; no category automatically
+     * replays handlers.
+     */
+    public enum Category {
+
+        /**
+         * A database constraint rejected the write.
+         */
+        CONSTRAINT,
+
+        /**
+         * A bounded lock or statement wait expired.
+         */
+        TIMEOUT,
+
+        /**
+         * The database detected a deadlock; handlers are not automatically replayed.
+         */
+        DEADLOCK,
+
+        /**
+         * The database rejected the transaction for a serialization conflict.
+         */
+        SERIALIZATION,
+
+        /**
+         * The connection failed; commit outcome may require reconciliation.
+         */
+        CONNECTION,
+
+        /**
+         * The transaction is already aborted or rollback-only.
+         */
+        ABORTED,
+
+        /**
+         * No more specific supported SQLState category applies.
+         */
+        OTHER }
+    /** Transaction phase in which the failure occurred. */
     private final String phase;
+    /** SQLState-based classification used for diagnostics and reconciliation. */
     private final Category category;
 
     JdbcTransactionException(String phase, Throwable cause) {
@@ -18,10 +65,22 @@ public final class JdbcTransactionException extends WorkflowPersistenceException
         this.category = classify(cause);
     }
 
+    /**
+     * Returns transaction phase in which the failure occurred.
+     * @return transaction phase in which the failure occurred
+     */
     public String phase() { return phase; }
+    /**
+     * Returns diagnostic or SQL failure category.
+     * @return diagnostic or SQL failure category
+     */
     public Category category() { return category; }
 
-    /** True when durable workers must stop automatic handler replay and request reconciliation. */
+    /**
+     * True when durable workers must stop automatic handler replay and request reconciliation.
+     * @param failure original failure for diagnostics; avoid exposing secrets in logs
+     * @return true when the condition described above holds; false otherwise
+     */
     public static boolean requiresReconciliation(Throwable failure) {
         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Throwable current=failure; current!=null && seen.add(current); current=current.getCause())
@@ -32,7 +91,11 @@ public final class JdbcTransactionException extends WorkflowPersistenceException
         };
     }
 
-    /** Classifies repository/driver cause chains without copying server messages or SQL. */
+    /**
+     * Classifies repository/driver cause chains without copying server messages or SQL.
+     * @param failure original failure for diagnostics; avoid exposing secrets in logs
+     * @return the resulting category
+     */
     public static Category classify(Throwable failure) {
         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Throwable current = failure; current != null && seen.add(current); current = current.getCause()) {

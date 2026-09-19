@@ -11,6 +11,10 @@ import org.jworkflow.model.ListenerArgument;
 import org.jworkflow.model.WorkflowDefinition;
 import org.jworkflow.persistence.PersistenceSerializationException;
 
+/**
+ * Encodes immutable workflow graphs as deterministic versioned JSON, including declarative listener arguments and
+ * optional DSL provenance.
+ */
 final class JdbcDefinitionCodec {
     private final ObjectMapper mapper = JsonMapper.builder()
             .addModule(new JavaTimeModule())
@@ -30,6 +34,9 @@ final class JdbcDefinitionCodec {
         catch (Exception failure) { throw new PersistenceSerializationException("Cannot decode workflow definition", failure); }
     }
 
+    /**
+     * Jackson type discriminator used when serializing the restricted listener argument variants.
+     */
     @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
     @JsonSubTypes({
             @JsonSubTypes.Type(value = ListenerArgument.CurrentEvent.class, name = "event"),

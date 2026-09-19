@@ -48,11 +48,26 @@ public final class GroovyWorkflowDslCompiler {
             "getClass", "wait", "notify", "notifyAll", "hashCode", "equals", "toString", "clone", "finalize");
     private final DslCompilerOptions options;
 
+    /**
+     * Constructs GroovyWorkflowDslCompiler with its default configuration.
+     */
     public GroovyWorkflowDslCompiler() { this(DslCompilerOptions.DEFAULT);
     }
+    /**
+     * Constructs GroovyWorkflowDslCompiler with the supplied collaborators and configuration.
+     * @param options resource limits for restricted DSL compilation
+     * @throws NullPointerException if options is null
+     */
     public GroovyWorkflowDslCompiler(DslCompilerOptions options) { this.options = Objects.requireNonNull(options);
     }
 
+    /**
+     * Parses and interprets the restricted DSL into immutable definition data. Submitted closures and scripts are
+     * never executed.
+     * @param text workflow source text and location
+     * @return the immutable workflow definition
+     * @throws NullPointerException if text is null
+     */
     public WorkflowDefinition compile(WorkflowDefinitionText text) {
         Objects.requireNonNull(text, "definitionText");
         if (text.content().length() > options.maxSourceCharacters())
@@ -692,6 +707,9 @@ public final class GroovyWorkflowDslCompiler {
         return line < 0 ? message : message.substring(0, line);
     }
 
+    /**
+     * Separates named and positional AST arguments while validating the restricted DSL grammar.
+     */
     private final class Args {
         private final Map<String, Expression> named;
             private final List<Expression> positionals;
@@ -736,6 +754,16 @@ public final class GroovyWorkflowDslCompiler {
             return this;
         }
     }
+    /**
+     * Declarative event/target pair extracted from a DSL transition.
+     * @param event event to deliver or inspect
+     * @param target node or workflow destination
+     */
     private record Route(String event, String target) {}
+    /**
+     * Fork and join nodes constructed together from one DSL declaration.
+     * @param fork parallel branch configuration
+     * @param join required branch completion configuration
+     */
     private record ForkNodes(WorkflowNode fork, WorkflowNode join) {}
 }

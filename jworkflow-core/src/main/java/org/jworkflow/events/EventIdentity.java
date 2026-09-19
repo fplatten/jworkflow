@@ -1,5 +1,9 @@
 package org.jworkflow.events;
 
+/**
+ * Shared validation for nonblank identity strings limited to 512 characters; it does not normalize or rewrite
+ * their content.
+ */
 final class EventIdentity {
     private EventIdentity() {}
     static String require(String value, String name) {

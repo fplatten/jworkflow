@@ -9,6 +9,11 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.*;
 
+/**
+ * JDBC first-arrival inbox deduplication, ordered claims and processing history. PostgreSQL claims use SKIP LOCKED
+ * and acquisition tokens; SQLite serializes writes. Token finalization must share the transaction with dependent
+ * workflow writes.
+ */
 final class JdbcInboxRepository implements InboxRepository {
     private static final String TEXT_SELECT_PREFIX = "select ";
     private static final String COLUMNS = "id,external_event_id,source_system,correlation_id,causation_id,received_at,processed_at,status_value,last_error_message,message_payload,message_payload_blob,message_content_type,message_schema_name,message_schema_version,message_metadata_json,message_redaction_status,attempt_count,next_attempt_at,claimed_by,claim_until,claim_token";
@@ -17,6 +22,9 @@ final class JdbcInboxRepository implements InboxRepository {
     JdbcInboxRepository(JdbcConnectionFactory connections){this.connections=connections;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public InboxInsertResult insertIfAbsent(InboxMessage m){
         String sql=connections.strategy().insertIgnoringDuplicate("insert into workflow_inbox "+"""
                 (id,external_event_id,source_system,correlation_id,causation_id,received_at,processed_at,status_value,
@@ -51,6 +59,9 @@ final class JdbcInboxRepository implements InboxRepository {
         catch(SQLException x){throw new WorkflowInfrastructureException("Failed to insert inbox message "+m.messageId(),x);
         }
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<InboxMessage> findById(UUID id){
         String sql = TEXT_SELECT_PREFIX + COLUMNS + " from workflow_inbox where id=?";
         try (Connection connection = connections.open();
@@ -63,6 +74,9 @@ final class JdbcInboxRepository implements InboxRepository {
             throw new WorkflowInfrastructureException("Failed to find inbox message " + id, exception);
         }
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<InboxMessage> findByExternalIdentity(String source,String external){
         try(Connection c=connections.open()){return findByExternalIdentity(c,source,external);}
         catch(SQLException x){throw new WorkflowInfrastructureException("Failed to find inbox identity",x);}
@@ -74,14 +88,29 @@ final class JdbcInboxRepository implements InboxRepository {
             try(ResultSet r=s.executeQuery()){return r.next()?Optional.of(map(r)):Optional.empty();
         }}
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<InboxMessage> claimEligible(Instant now,String owner,Instant until,int limit){
         return JdbcLeaseSupport.claim(connections,JdbcLeaseSupport.Queue.INBOX,COLUMNS,this::map,now,owner,until,limit);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<InboxMessage> claimEligibleFenced(Instant now,String owner,Instant until,int limit){return claimEligible(now,owner,until,limit);}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void requireClaim(UUID id,String owner,String token){JdbcLeaseSupport.requireClaim(connections,JdbcLeaseSupport.Queue.INBOX,id,owner,token);}
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void markProcessed(UUID id,String owner,Instant at){connections.strategy().requireLegacyClaimSupport();transition(id,owner,"update workflow_inbox set status_value='PROCESSED',processed_at=?,claimed_by=null,claim_until=null,claim_token=null where id=? and status_value='CLAIMED' and claimed_by=?",at);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void scheduleRetry(UUID id,String owner,Instant next,String error){connections.strategy().requireLegacyClaimSupport();String sql="update workflow_inbox set status_value='RETRY_SCHEDULED',attempt_count=attempt_count+1,next_attempt_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null where id=? and status_value='CLAIMED' and claimed_by=?";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){connections.strategy().bindInstant(s, 1, next);
@@ -91,6 +120,9 @@ final class JdbcInboxRepository implements InboxRepository {
         one(s,id,"inbox retry");
     }catch(SQLException x){throw new WorkflowInfrastructureException("Failed inbox retry "+id,x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void markDeadLetter(UUID id,String owner,String error,Instant at){connections.strategy().requireLegacyClaimSupport();String sql="update workflow_inbox set status_value='DEAD_LETTER',attempt_count=attempt_count+1,dead_lettered_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null where id=? and status_value='CLAIMED' and claimed_by=?";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){connections.strategy().bindInstant(s, 1, at);
@@ -100,16 +132,31 @@ final class JdbcInboxRepository implements InboxRepository {
         one(s,id,"inbox dead-letter");
     }catch(SQLException x){throw new WorkflowInfrastructureException("Failed inbox dead-letter "+id,x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void markProcessed(UUID id,String owner,String token,Instant at){
         JdbcLeaseSupport.transition(connections,JdbcLeaseSupport.Queue.INBOX,id,owner,token,"status_value='PROCESSED',processed_at=?,claimed_by=null,claim_until=null,claim_token=null",at);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void scheduleRetry(UUID id,String owner,String token,Instant next,String error){
         JdbcLeaseSupport.transition(connections,JdbcLeaseSupport.Queue.INBOX,id,owner,token,"status_value='RETRY_SCHEDULED',attempt_count=attempt_count+1,next_attempt_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null",next,error);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void markDeadLetter(UUID id,String owner,String token,String error,Instant at){
         JdbcLeaseSupport.transition(connections,JdbcLeaseSupport.Queue.INBOX,id,owner,token,"status_value='DEAD_LETTER',attempt_count=attempt_count+1,dead_lettered_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null",at,error);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public int releaseExpiredClaims(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.INBOX,now);}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void appendAttempt(InboxAttempt a){String sql="insert into workflow_inbox_attempt (id,inbox_id,attempt_number,status_value,error_code,error_message,created_at) values (?,?,?,?,?,?,?)";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){s.setString(1,a.attemptId().toString());
@@ -122,6 +169,9 @@ final class JdbcInboxRepository implements InboxRepository {
         one(s,a.messageId(),"inbox attempt append");
     }catch(SQLException x){throw new WorkflowInfrastructureException("Failed inbox attempt",x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<InboxAttempt> findAttempts(UUID id){String sql="select id,inbox_id,attempt_number,status_value,error_code,error_message,created_at from workflow_inbox_attempt where inbox_id=? order by attempt_number";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){s.setString(1,id.toString());
@@ -130,6 +180,9 @@ final class JdbcInboxRepository implements InboxRepository {
         return List.copyOf(out);
     }}catch(SQLException x){throw new WorkflowInfrastructureException("Failed inbox attempts",x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void requestReprocessing(UUID id,Instant at){String sql="update workflow_inbox set status_value='RECEIVED',next_attempt_at=?,claimed_by=null,claim_until=null,claim_token=null where id=? and status_value in ('DEAD_LETTER','RETRY_SCHEDULED')";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){connections.strategy().bindInstant(s, 1, at);

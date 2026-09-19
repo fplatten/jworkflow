@@ -9,7 +9,13 @@ import java.util.Map;
 
 /** Loaded only for SQLite; all SQLite driver linkage and PRAGMAs live here. */
 final class SqliteDatabaseStrategy implements JdbcDatabaseStrategy {
+    /**
+     * {@inheritDoc}
+     */
     @Override public boolean usesImmediateWriteTransaction() { return true; }
+    /**
+     * {@inheritDoc}
+     */
     @Override public int transactionIsolation() { return Connection.TRANSACTION_NONE; }
     private final int busyTimeout;
     private final boolean wal;
@@ -30,8 +36,14 @@ final class SqliteDatabaseStrategy implements JdbcDatabaseStrategy {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowEngine.Type type() { return WorkflowEngine.Type.SQLITE; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void configure(Connection connection) throws SQLException {
         connection.unwrap(SQLiteConnection.class).setBusyTimeout(busyTimeout);
         try (Statement statement = connection.createStatement()) {
@@ -40,6 +52,9 @@ final class SqliteDatabaseStrategy implements JdbcDatabaseStrategy {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void initializeSchema(JdbcConnectionFactory factory) {
         JdbcSchemaInitializer.initializeSqlite(factory);
     }

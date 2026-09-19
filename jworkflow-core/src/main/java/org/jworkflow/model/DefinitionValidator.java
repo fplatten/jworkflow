@@ -6,7 +6,21 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * Checks workflow structure, transitions, fork/join and referenced definitions before activation. Validation does
+ * not execute step handlers or DSL closures.
+ */
 public final class DefinitionValidator {
+    /** Creates a stateless validator for workflow graph constraints. */
+    public DefinitionValidator() {
+    }
+
+    /**
+     * Collects structural definition errors without executing handlers; the registry overload also resolves
+     * referenced definitions.
+     * @param definition immutable workflow definition
+     * @return the resulting definition validation result
+     */
     public DefinitionValidationResult validate(WorkflowDefinition definition) {
         ArrayList<DefinitionValidationError> errors = new ArrayList<>();
         if (definition == null) {
@@ -43,6 +57,13 @@ public final class DefinitionValidator {
         return new DefinitionValidationResult(errors);
     }
 
+    /**
+     * Collects structural definition errors without executing handlers; the registry overload also resolves
+     * referenced definitions.
+     * @param definition immutable workflow definition
+     * @param registry registry retaining activated workflow definitions
+     * @return the resulting definition validation result
+     */
     public DefinitionValidationResult validate(WorkflowDefinition definition, WorkflowDefinitionRegistry registry) {
         DefinitionValidationResult base = validate(definition);
         ArrayList<DefinitionValidationError> errors = new ArrayList<>(base.errors());

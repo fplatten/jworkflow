@@ -152,5 +152,11 @@ final class PostgresqlSchemaInitializer {
         }
     }
 
+    /**
+     * PostgreSQL migration version, description and immutable classpath resource identity.
+     * @param version declared workflow or format version
+     * @param description the description
+     * @param resource the resource
+     */
     record Migration(int version, String description, String resource) { }
 }

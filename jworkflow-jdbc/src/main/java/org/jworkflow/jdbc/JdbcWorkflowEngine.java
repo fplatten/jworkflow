@@ -22,7 +22,15 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Repository-backed engine; this object never owns authoritative workflow state. */
+/**
+ * Repository-backed engine; this object never owns authoritative workflow state.
+ *
+ * <p>Durable commands load the current snapshot and its exact definition revision. PostgreSQL protects complete
+ * replay keys through the outer commit and preserves optimistic locking for distinct keys. Successful callbacks
+ * wait for outermost commit and connection cleanup. Handler/network effects are not rolled back and are never
+ * automatically replayed after ambiguous commit or deadlock. Closing stops engine-owned workers but never closes
+ * the host DataSource.</p>
+ */
 public final class JdbcWorkflowEngine implements WorkflowEngine {
     static final int RESIDENT_WORKFLOW_COUNT = 0;
     private static final String TEXT_START = "start";
@@ -80,21 +88,102 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         recoverStartup();
             startTimerPoller();
     }
+    /**
+     * Constructs a durable engine with a shared JDBC persistence bundle. Actual database metadata must match an
+     *  explicitly supplied type; legacy overloads infer it. Host DataSources remain caller-owned.
+     * @param type selected JDBC engine backend
+     * @param url JDBC URL selecting the database and trusted schema
+     * @param user host-provided database username
+     * @param password host-provided database password; do not log this value
+     * @param driver optional supplied JDBC driver; ignored when a DataSource is selected
+     * @param source host-owned source of idle auto-commit connections; takes precedence over URL and Driver
+     * @param init whether to apply built-in schema migrations
+     * @return the configured durable engine; the caller must close it
+     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     */
     public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init)throws ClassNotFoundException{
         return create(type,url,user,password,driver,source,init,new WorkflowDefinitionRegistry(),NoOpEventPublisher.INSTANCE,Map.of(),new BranchConditionEvaluator(),Map.of(),Map.of(),Map.of(),NoOpWorkflowLifecycleObserver.INSTANCE,Clock.systemUTC(),CaptureAllEventPolicy.INSTANCE);
     }
+    /**
+     * Constructs a durable engine with a shared JDBC persistence bundle. Actual database metadata must match an
+     *  explicitly supplied type; legacy overloads infer it. Host DataSources remain caller-owned.
+     * @param type selected JDBC engine backend
+     * @param url JDBC URL selecting the database and trusted schema
+     * @param user host-provided database username
+     * @param password host-provided database password; do not log this value
+     * @param driver optional supplied JDBC driver; ignored when a DataSource is selected
+     * @param source host-owned source of idle auto-commit connections; takes precedence over URL and Driver
+     * @param init whether to apply built-in schema migrations
+     * @param definitions registry of selected workflow definitions
+     * @param publisher destination or event publisher used by this adapter
+     * @param handlers registered action handlers
+     * @param conditions declarative condition evaluator and registered predicates
+     * @param starts event-to-workflow start mapping for supported runtime modes
+     * @param settings adapter-specific settings; explicit SQLite settings are rejected in PostgreSQL mode
+     * @param listeners infrastructure listeners indexed by registered identity
+     * @param clock clock used for recorded times and lease/retry decisions
+     * @return the configured durable engine; the caller must close it
+     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     */
     @SuppressWarnings("java:S107") // Compatibility factory retained for existing clients.
     public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
       WorkflowDefinitionRegistry definitions,EventPublisher publisher,Map<String,StepHandler> handlers,BranchConditionEvaluator conditions,
       Map<String,String> starts,Map<String,String> settings,Map<String,Object> listeners,Clock clock)throws ClassNotFoundException{
         return create(type,url,user,password,driver,source,init,definitions,publisher,handlers,conditions,starts,settings,listeners,NoOpWorkflowLifecycleObserver.INSTANCE,clock);
     }
+    /**
+     * Constructs a durable engine with a shared JDBC persistence bundle. Actual database metadata must match an
+     *  explicitly supplied type; legacy overloads infer it. Host DataSources remain caller-owned.
+     * @param type selected JDBC engine backend
+     * @param url JDBC URL selecting the database and trusted schema
+     * @param user host-provided database username
+     * @param password host-provided database password; do not log this value
+     * @param driver optional supplied JDBC driver; ignored when a DataSource is selected
+     * @param source host-owned source of idle auto-commit connections; takes precedence over URL and Driver
+     * @param init whether to apply built-in schema migrations
+     * @param definitions registry of selected workflow definitions
+     * @param publisher destination or event publisher used by this adapter
+     * @param handlers registered action handlers
+     * @param conditions declarative condition evaluator and registered predicates
+     * @param starts event-to-workflow start mapping for supported runtime modes
+     * @param settings adapter-specific settings; explicit SQLite settings are rejected in PostgreSQL mode
+     * @param listeners infrastructure listeners indexed by registered identity
+     * @param lifecycleObserver best-effort lifecycle observer
+     * @param clock clock used for recorded times and lease/retry decisions
+     * @return the configured durable engine; the caller must close it
+     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     */
     @SuppressWarnings("java:S107") // Compatibility factory retained for existing clients.
     public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
       WorkflowDefinitionRegistry definitions,EventPublisher publisher,Map<String,StepHandler> handlers,BranchConditionEvaluator conditions,
       Map<String,String> starts,Map<String,String> settings,Map<String,Object> listeners,WorkflowLifecycleObserver lifecycleObserver,Clock clock)throws ClassNotFoundException{
         return create(type,url,user,password,driver,source,init,definitions,publisher,handlers,conditions,starts,settings,listeners,lifecycleObserver,clock,CaptureAllEventPolicy.INSTANCE);
     }
+    /**
+     * Constructs a durable engine with a shared JDBC persistence bundle. Actual database metadata must match an
+     *  explicitly supplied type; legacy overloads infer it. Host DataSources remain caller-owned.
+     * @param type selected JDBC engine backend
+     * @param url JDBC URL selecting the database and trusted schema
+     * @param user host-provided database username
+     * @param password host-provided database password; do not log this value
+     * @param driver optional supplied JDBC driver; ignored when a DataSource is selected
+     * @param source host-owned source of idle auto-commit connections; takes precedence over URL and Driver
+     * @param init whether to apply built-in schema migrations
+     * @param definitions registry of selected workflow definitions
+     * @param publisher destination or event publisher used by this adapter
+     * @param handlers registered action handlers
+     * @param conditions declarative condition evaluator and registered predicates
+     * @param starts event-to-workflow start mapping for supported runtime modes
+     * @param settings adapter-specific settings; explicit SQLite settings are rejected in PostgreSQL mode
+     * @param listeners infrastructure listeners indexed by registered identity
+     * @param lifecycleObserver best-effort lifecycle observer
+     * @param clock clock used for recorded times and lease/retry decisions
+     * @param eventCapturePolicy policy applied before durable or observable event boundaries
+     * @return the configured durable engine; the caller must close it
+     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     * @throws NullPointerException if type is null
+     * @throws IllegalArgumentException if the supplied values violate the operation's constraints
+     */
     @SuppressWarnings("java:S107") // Optional-module factory mirrors the builder configuration contract.
     public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
       WorkflowDefinitionRegistry definitions,EventPublisher publisher,Map<String,StepHandler> handlers,BranchConditionEvaluator conditions,
@@ -114,13 +203,34 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         }
         return new JdbcWorkflowEngine(type,c,definitions,publisher,handlers,conditions,starts,listeners,s,lifecycleObserver,clock,eventCapturePolicy);
     }
-    /** Compatibility overload retained for callers compiled before clock injection was added. */
+    /**
+     * Compatibility overload retained for callers compiled before clock injection was added.
+     * @param type selected JDBC engine backend
+     * @param url JDBC URL selecting the database and trusted schema
+     * @param user host-provided database username
+     * @param password host-provided database password; do not log this value
+     * @param driver optional supplied JDBC driver; ignored when a DataSource is selected
+     * @param source host-owned source of idle auto-commit connections; takes precedence over URL and Driver
+     * @param init whether to apply built-in schema migrations
+     * @param definitions registry of selected workflow definitions
+     * @param publisher destination or event publisher used by this adapter
+     * @param handlers registered action handlers
+     * @param conditions declarative condition evaluator and registered predicates
+     * @param starts event-to-workflow start mapping for supported runtime modes
+     * @param settings adapter-specific settings; explicit SQLite settings are rejected in PostgreSQL mode
+     * @param listeners infrastructure listeners indexed by registered identity
+     * @return the configured durable engine; the caller must close it
+     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     */
     @SuppressWarnings("java:S107") // Compatibility factory retained for existing clients.
     public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
       WorkflowDefinitionRegistry definitions,EventPublisher publisher,Map<String,StepHandler> handlers,BranchConditionEvaluator conditions,
       Map<String,String> starts,Map<String,String> settings,Map<String,Object> listeners)throws ClassNotFoundException{
         return create(type,url,user,password,driver,source,init,definitions,publisher,handlers,conditions,starts,settings,listeners,NoOpWorkflowLifecycleObserver.INSTANCE,Clock.systemUTC());
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public StartWorkflowResult start(StartWorkflowCommand command){
         Committed<StartWorkflowResult> c=persistence.jdbcTransactions().inWriteTransaction(()->{String h=hash(TEXT_START,command.workflowKey(),command.workflowVersion(),command.businessKey(),new JdbcJsonCodec().write(command.variables()));
             Optional<CommandResultRecord> prior=prior(command.metadata().idempotencyKey(),TEXT_START,h);
@@ -133,12 +243,24 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         notifyObservers(c.events);
             return c.result;
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowCommandResult signal(SignalWorkflowCommand c){return mutate(TEXT_SIGNAL,c.instanceId(),c.metadata(),signalBody(c.signal()),(s,t)->machineFor(s).signal(s,t,c));
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowCommandResult retryFailedStep(RetryFailedStepCommand c){return mutate("retryFailedStep",c.instanceId(),c.metadata(),c.stepId(),(s,t)->machineFor(s).retry(s,t,c));
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowCommandResult cancel(CancelWorkflowCommand c){return mutate("cancel",c.instanceId(),c.metadata(),"cancel",(s,t)->machineFor(s).cancel(s,t,c));
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowCommandResult resume(ResumeWorkflowCommand c){return mutate("resume",c.instanceId(),c.metadata(),"resume",(s,t)->machineFor(s).resume(s,t,c));
     }
     private WorkflowCommandResult mutate(String type,WorkflowInstanceId id,WorkflowCommandMetadata metadata,String body,Transition transition){
@@ -232,15 +354,37 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
                 .findRevision(snapshot.workflowKey(),snapshot.workflowVersion(),snapshot.workflowRevision())
                 .orElseThrow(()->new WorkflowDefinitionNotFoundException(snapshot.workflowKey(),snapshot.workflowVersion())));
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowSnapshot snapshot(WorkflowInstanceId id){return require(id);
-    }@Override public WorkflowSnapshot snapshot(String key,String business){return persistence.instances().findByBusinessKey(key,business).orElseThrow(()->new WorkflowInstanceNotFoundException("No workflow instance for "+key+" and "+business));
     }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override public WorkflowSnapshot snapshot(String key,String business){return persistence.instances().findByBusinessKey(key,business).orElseThrow(()->new WorkflowInstanceNotFoundException("No workflow instance for "+key+" and "+business));
+    }
+    /**
+     * {@inheritDoc}
+     */
     @Override public org.jworkflow.query.WorkflowQueryService queries(){return new org.jworkflow.query.PersistenceWorkflowQueryService(persistence);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowEngineContext context(){return context;
-    }@Override public void registerListener(String id,Object listener){if(id==null||id.isBlank())throw new IllegalArgumentException("listenerId is required");
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override public void registerListener(String id,Object listener){if(id==null||id.isBlank())throw new IllegalArgumentException("listenerId is required");
         listeners.put(id,Objects.requireNonNull(listener));
     }
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("java:S3776") // Route selection validates all mutually exclusive identity modes.
     @Override public void publish(WorkflowEvent event){EventMetadata metadata=Objects.requireNonNull(event,TEXT_EVENT).metadata();
         WorkflowEventRoute requested;
@@ -251,6 +395,9 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     }WorkflowRoutingResult result=route(event,requested);
         if(result.outcome()!=WorkflowRoutingOutcome.ROUTED)throw new InvalidWorkflowRouteException(result.outcome(),result.detail());
     }
+    /**
+     * {@inheritDoc}
+     */
     @SuppressWarnings("java:S3776") // Routing handles explicit outcomes and independent fan-out failures.
     @Override public WorkflowRoutingResult route(WorkflowEvent event,WorkflowEventRoute requested){event=capture(event);
         Objects.requireNonNull(requested,"route");
@@ -345,6 +492,11 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         });
         if(!recovery.lazyDefinitionValidation)doAuditActiveDefinitions(recovery.startupValidationBatchSize);
     }
+    /**
+     * Validates every active instance against its exact stored definition using bounded startup pages; returns the
+     * number checked.
+     * @return the number of active instances checked
+     */
     public int auditActiveDefinitions(){return doAuditActiveDefinitions(recovery.startupValidationBatchSize);
     }
     private int doAuditActiveDefinitions(int batchSize){int scanned=0;
@@ -425,6 +577,9 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     private static String safeMessage(Throwable failure){String message=failure.getMessage();
         return message==null?failure.getClass().getSimpleName():message.substring(0,Math.min(message.length(),500));
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void close(){if(!closed.compareAndSet(false,true))return;
         ScheduledExecutorService poller=timerPoller;
         if(poller!=null){poller.shutdown();
@@ -432,13 +587,41 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     }catch(InterruptedException e){poller.shutdownNow();
         Thread.currentThread().interrupt();
     }}}
+    /**
+     * Returns the JDBC backend selected for this engine.
+     * @return SQLITE or POSTGRESQL
+     */
     public Type type(){return type;
-    }public JdbcConnectionFactory connectionFactory(){return connections;
-    }public WorkflowTransactionManager transactionManager(){return persistence.transactions();
     }
+
+    /**
+     * Returns the connections.
+     * @return the connections
+     */
+    public JdbcConnectionFactory connectionFactory(){return connections;
+    }
+
+    /**
+     * Returns the transaction manager shared by this engine and its repositories.
+     * @return the transaction manager shared by this engine and its repositories
+     */
+    public WorkflowTransactionManager transactionManager(){return persistence.transactions();
+    }
+    /**
+     * Creates a JDBC inbox application sharing this engine's persistence and command boundary. Close the
+     * application to stop its owned polling worker.
+     * @param translator mapping from an inbox envelope to commands or an explicit route
+     * @return the resulting jdbc inbox application
+     */
     public JdbcInboxApplication inbox(InboxEventTranslator translator){if(closed.get())throw new WorkflowInvalidStateException("Workflow engine is closed");
         return new JdbcInboxApplication(this,persistence,translator,clock,settings,lifecycleObserver);
     }
+    /**
+     * Creates an at-least-once outbox application using the supplied destination transports; close it to stop its
+     * owned worker.
+     * @param destinations publication destinations selected for the event
+     * @return the resulting jdbc outbox application
+     */
     public JdbcOutboxApplication outbox(Map<String,DestinationPublisher> destinations){if(closed.get())throw new WorkflowInvalidStateException("Workflow engine is closed");
         return new JdbcOutboxApplication(persistence,destinations,clock,settings,lifecycleObserver);
     }
@@ -483,18 +666,73 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     return HexFormat.of().formatHex(d.digest());
     }catch(Exception e){throw new IllegalStateException(e);
     }}
-    private interface Transition{WorkflowTransitionResult<WorkflowCommandResult> apply(WorkflowSnapshot s,List<WorkflowTimer> t);
-    }private record Committed<T>(T result,List<WorkflowEvent> events){}private record RouteAttempt(WorkflowRoutingOutcome outcome,String detail){}
-    private final class RepositoryContext implements WorkflowEngineContext{@Override public List<WorkflowSnapshot> getWorkflows(){ArrayList<WorkflowSnapshot> all=new ArrayList<>();
+    /**
+     * Calculates a command result and durable effects from the current snapshot and timer state.
+     */
+    private interface Transition{
+
+        /**
+         * Calculates a command result and persistence effects from the supplied snapshot and timer state.
+         * @param s the immutable instance snapshot
+         * @param t the list&lt;workflow timer&gt; value
+         * @return the resulting workflow transition result&lt;workflow command result&gt;
+         */
+        WorkflowTransitionResult<WorkflowCommandResult> apply(WorkflowSnapshot s,List<WorkflowTimer> t);
+    }
+
+    /**
+     * Command result and observations retained for dispatch after successful outer commit.
+     * @param <T> the value type
+     * @param result result data associated with the operation
+     * @param events workflow events in their supplied order
+     */
+    private record Committed<T>(T result,List<WorkflowEvent> events){}
+
+    /**
+     * Per-target route result accumulated while resolving explicit event delivery.
+     * @param outcome event-routing resolution outcome
+     * @param detail diagnostic or workflow detail associated with the observation
+     */
+    private record RouteAttempt(WorkflowRoutingOutcome outcome,String detail){}
+    /**
+     * Read-only engine context backed by repository snapshot queries.
+     */
+    private final class RepositoryContext implements WorkflowEngineContext{
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override public List<WorkflowSnapshot> getWorkflows(){ArrayList<WorkflowSnapshot> all=new ArrayList<>();
         org.jworkflow.persistence.ActiveWorkflowCursor cursor=null;
         while(true){List<WorkflowSnapshot> page=persistence.instances().findActiveAfter(cursor,recovery.startupValidationBatchSize);
         all.addAll(page);
         if(page.size()<recovery.startupValidationBatchSize)return List.copyOf(all);
         WorkflowSnapshot last=page.get(page.size()-1);
         cursor=new org.jworkflow.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
-    }}@Override public Optional<WorkflowSnapshot> getWorkflow(WorkflowInstanceId id){return persistence.instances().findById(id);
-    }@Override public Optional<WorkflowSnapshot> getWorkflow(String key,String business){return persistence.instances().findByBusinessKey(key,business);
     }}
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override public Optional<WorkflowSnapshot> getWorkflow(WorkflowInstanceId id){return persistence.instances().findById(id);
+    }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override public Optional<WorkflowSnapshot> getWorkflow(String key,String business){return persistence.instances().findByBusinessKey(key,business);
+    }}
+    /**
+     * Validated polling, lease, batch and startup settings for durable recovery.
+     * @param timerPolling the timer polling
+     * @param pollInterval the poll interval
+     * @param lease the lease
+     * @param retryDelay the retry delay
+     * @param batchSize the batch size
+     * @param startupValidationBatchSize the startup validation batch size
+     * @param maximumRoutingCandidates the maximum routing candidates
+     * @param lazyDefinitionValidation the lazy definition validation
+     */
     private record RecoveryOptions(boolean timerPolling,Duration pollInterval,Duration lease,Duration retryDelay,int batchSize,int startupValidationBatchSize,int maximumRoutingCandidates,boolean lazyDefinitionValidation){
         static RecoveryOptions from(Map<String,String> settings){Map<String,String>s=settings==null?Map.of():settings;
             long poll=number(s,"recovery.timer-poll-interval-ms",100,10,60_000);

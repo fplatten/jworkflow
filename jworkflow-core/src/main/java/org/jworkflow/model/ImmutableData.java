@@ -15,6 +15,11 @@ public final class ImmutableData {
     private ImmutableData() {
     }
 
+    /**
+     * Defensively copies a supported string-keyed variable map; null becomes an empty immutable map.
+     * @param values values to defensively copy or encode
+     * @return the resulting key/value mapping
+     */
     public static Map<String, Object> copyStringObjectMap(Map<String, ?> values) {
         if (values == null || values.isEmpty()) {
             return Map.of();
@@ -24,6 +29,11 @@ public final class ImmutableData {
         return Collections.unmodifiableMap(copy);
     }
 
+    /**
+     * Recursively copies supported containers and arrays to isolate stored values from their inputs.
+     * @param value the value to encode or copy
+     * @return the resulting object
+     */
     public static Object copy(Object value) {
         if (value == null || value instanceof String || value instanceof Number
                 || value instanceof Boolean || value instanceof Character

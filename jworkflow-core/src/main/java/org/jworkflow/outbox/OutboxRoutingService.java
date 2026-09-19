@@ -1,9 +1,26 @@
 package org.jworkflow.outbox;
 import org.jworkflow.events.*;
     import java.util.*;
+/**
+ * Converts one workflow event into publication envelopes for the configured router's distinct destinations. This
+ * calculation does not persist or send the envelopes.
+ */
 public final class OutboxRoutingService {private final OutboxRouter router;
+    /**
+     * Constructs OutboxRoutingService with the supplied collaborators and configuration.
+     * @param router destination selection policy
+     * @throws NullPointerException if router is null
+     */
     public OutboxRoutingService(OutboxRouter router){this.router=Objects.requireNonNull(router);
-}public List<OutboxMessage> route(WorkflowEvent event){LinkedHashSet<String> destinations=new LinkedHashSet<>(router.destinations(event));
+}
+
+    /**
+     * Builds publication envelopes for the destinations selected by the configured router.
+     * @param event event to deliver or inspect
+     * @return the matching values in the order defined by this operation
+     * @throws IllegalArgumentException if the supplied values violate the operation's constraints
+     */
+    public List<OutboxMessage> route(WorkflowEvent event){LinkedHashSet<String> destinations=new LinkedHashSet<>(router.destinations(event));
     ArrayList<OutboxMessage> result=new ArrayList<>();
     LinkedHashMap<String,String> attributes=new LinkedHashMap<>(event.message().attributes());
     attributes.put("eventName",event.eventName().value());

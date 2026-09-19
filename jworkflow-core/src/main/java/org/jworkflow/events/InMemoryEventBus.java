@@ -11,6 +11,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * In-process subscription registry and event dispatcher. Subscriber exceptions are passed to the configured error
+ * handler; events and subscriptions are not persisted across restart.
+ */
 public final class InMemoryEventBus implements EventBus {
     private final ConcurrentMap<String, CopyOnWriteArrayList<SubscriberRegistration>> subscribers = new ConcurrentHashMap<>();
     private final EventSubscriberErrorHandler errorHandler;
@@ -19,14 +23,26 @@ public final class InMemoryEventBus implements EventBus {
         this.errorHandler = Objects.requireNonNull(errorHandler, "errorHandler");
     }
 
+    /**
+     * Creates an instance with its built-in default collaborators and configuration.
+     * @return the resulting in memory event bus
+     */
     public static InMemoryEventBus createDefault() {
         return new InMemoryEventBus(EventSubscriberErrorHandler.ignoring());
     }
 
+    /**
+     * Creates a process-local event bus with the supplied subscriber failure policy.
+     * @param errorHandler diagnostic callback for an isolated observer or subscriber failure
+     * @return the resulting in memory event bus
+     */
     public static InMemoryEventBus create(EventSubscriberErrorHandler errorHandler) {
         return new InMemoryEventBus(errorHandler);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public EventSubscription subscribe(String topic, EventSubscriber subscriber) {
         validateTopic(topic);
@@ -38,6 +54,9 @@ public final class InMemoryEventBus implements EventBus {
         return () -> subscribers.getOrDefault(topic, new CopyOnWriteArrayList<>()).remove(registration);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public EventSubscription subscribe(EventListener listener) {
         Objects.requireNonNull(listener, "listener");
@@ -55,6 +74,9 @@ public final class InMemoryEventBus implements EventBus {
         return () -> subscriptions.forEach(EventSubscription::unsubscribe);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void publish(String topic, WorkflowEvent event) {
         validateTopic(topic);
@@ -82,6 +104,11 @@ public final class InMemoryEventBus implements EventBus {
         }
     }
 
+    /**
+     * Subscriber identity paired with its callback for removal and error reporting.
+     * @param id the identifier of the requested value
+     * @param subscriber event consumer to register
+     */
     private record SubscriberRegistration(String id, EventSubscriber subscriber) {
     }
 }

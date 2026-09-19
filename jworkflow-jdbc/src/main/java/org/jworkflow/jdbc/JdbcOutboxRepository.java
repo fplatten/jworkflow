@@ -9,6 +9,10 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.*;
 
+/**
+ * JDBC publication-intent and lease repository. Duplicate destination/key pairs validate immutable content. Fenced
+ * finalization protects database history after external publication but cannot prevent network duplicates.
+ */
 final class JdbcOutboxRepository implements OutboxRepository {
     private static final String TEXT_SELECT_PREFIX = "select ";
     private static final String COLUMNS = "id,event_id,destination,idempotency_key,correlation_id,causation_id,created_at,published_at,status_value,last_error_message,message_payload,message_payload_blob,message_content_type,message_schema_name,message_schema_version,message_metadata_json,message_redaction_status,attempt_count,next_attempt_at,claimed_by,claim_until,claim_token";
@@ -16,6 +20,9 @@ final class JdbcOutboxRepository implements OutboxRepository {
         private final JdbcEventMessageCodec messages=new JdbcEventMessageCodec();
     JdbcOutboxRepository(JdbcConnectionFactory connections){this.connections=connections;
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public OutboxMessage enqueue(OutboxMessage m){
         String sql="insert into workflow_outbox (id,event_id,destination,idempotency_key,correlation_id,causation_id,created_at,published_at,status_value,retry_count,last_error_message,message_payload,message_payload_blob,message_content_type,message_schema_name,message_schema_version,message_metadata_json,message_redaction_status,attempt_count,next_attempt_at,claimed_by,claim_until,claim_token) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
         sql=connections.strategy().insertIgnoringDuplicate(sql,"destination,idempotency_key");
@@ -49,8 +56,14 @@ final class JdbcOutboxRepository implements OutboxRepository {
         }catch(SQLException x){
             throw new WorkflowInfrastructureException("Failed outbox enqueue "+m.messageId(),x);
         }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<OutboxMessage> findById(UUID id){return find("id",id.toString(),null);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<OutboxMessage> findByIdempotencyKey(String destination,String key){return find("destination",destination,key);
     }
     private Optional<OutboxMessage> findByIdempotencyKey(Connection c,String destination,String key)throws SQLException{
@@ -59,14 +72,29 @@ final class JdbcOutboxRepository implements OutboxRepository {
             try(ResultSet rows=statement.executeQuery()){return rows.next()?Optional.of(map(rows)):Optional.empty();}
         }
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<OutboxMessage> claimEligible(Instant now,String owner,Instant until,int limit){
         return JdbcLeaseSupport.claim(connections,JdbcLeaseSupport.Queue.OUTBOX,COLUMNS,this::map,now,owner,until,limit);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<OutboxMessage> claimEligibleFenced(Instant now,String owner,Instant until,int limit){return claimEligible(now,owner,until,limit);}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void requireClaim(UUID id,String owner,String token){JdbcLeaseSupport.requireClaim(connections,JdbcLeaseSupport.Queue.OUTBOX,id,owner,token);}
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void markPublished(UUID id,String owner,Instant at){connections.strategy().requireLegacyClaimSupport();transition(id,owner,"update workflow_outbox set status_value='PUBLISHED',attempt_count=attempt_count+1,published_at=?,claimed_by=null,claim_until=null,claim_token=null where id=? and status_value='CLAIMED' and claimed_by=?",at);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void scheduleRetry(UUID id,String owner,Instant next,String error){connections.strategy().requireLegacyClaimSupport();String sql="update workflow_outbox set status_value='RETRY_SCHEDULED',attempt_count=attempt_count+1,retry_count=retry_count+1,next_attempt_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null where id=? and status_value='CLAIMED' and claimed_by=?";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){connections.strategy().bindInstant(s, 1, next);
@@ -76,6 +104,9 @@ final class JdbcOutboxRepository implements OutboxRepository {
         one(s,id,"outbox retry");
     }catch(SQLException x){throw new WorkflowInfrastructureException("Failed outbox retry "+id,x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void markDeadLetter(UUID id,String owner,String error,Instant at){connections.strategy().requireLegacyClaimSupport();String sql="update workflow_outbox set status_value='DEAD_LETTER',attempt_count=attempt_count+1,retry_count=retry_count+1,dead_lettered_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null where id=? and status_value='CLAIMED' and claimed_by=?";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){connections.strategy().bindInstant(s, 1, at);
@@ -85,16 +116,31 @@ final class JdbcOutboxRepository implements OutboxRepository {
         one(s,id,"outbox dead-letter");
     }catch(SQLException x){throw new WorkflowInfrastructureException("Failed outbox dead-letter "+id,x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void markPublished(UUID id,String owner,String token,Instant at){
         JdbcLeaseSupport.transition(connections,JdbcLeaseSupport.Queue.OUTBOX,id,owner,token,"status_value='PUBLISHED',attempt_count=attempt_count+1,published_at=?,claimed_by=null,claim_until=null,claim_token=null",at);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void scheduleRetry(UUID id,String owner,String token,Instant next,String error){
         JdbcLeaseSupport.transition(connections,JdbcLeaseSupport.Queue.OUTBOX,id,owner,token,"status_value='RETRY_SCHEDULED',attempt_count=attempt_count+1,retry_count=retry_count+1,next_attempt_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null",next,error);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public void markDeadLetter(UUID id,String owner,String token,String error,Instant at){
         JdbcLeaseSupport.transition(connections,JdbcLeaseSupport.Queue.OUTBOX,id,owner,token,"status_value='DEAD_LETTER',attempt_count=attempt_count+1,retry_count=retry_count+1,dead_lettered_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null",at,error);
     }
+    /**
+     * {@inheritDoc}
+     */
     @Override public int releaseExpiredClaims(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.OUTBOX,now);}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void appendAttempt(OutboxAttempt a){String sql="insert into workflow_outbox_attempt (id,outbox_id,attempt_number,status_value,error_code,error_message,created_at) values (?,?,?,?,?,?,?)";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){s.setString(1,a.attemptId().toString());
@@ -107,6 +153,9 @@ final class JdbcOutboxRepository implements OutboxRepository {
         one(s,a.messageId(),"outbox attempt");
     }catch(SQLException x){throw new WorkflowInfrastructureException("Failed outbox attempt",x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<OutboxAttempt> findAttempts(UUID id){String sql="select id,outbox_id,attempt_number,status_value,error_code,error_message,created_at from workflow_outbox_attempt where outbox_id=? order by attempt_number";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){s.setString(1,id.toString());
@@ -115,6 +164,9 @@ final class JdbcOutboxRepository implements OutboxRepository {
         return List.copyOf(out);
     }}catch(SQLException x){throw new WorkflowInfrastructureException("Failed outbox attempts",x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public void requestRepublishing(UUID id,Instant at){String sql="update workflow_outbox set status_value='PENDING',next_attempt_at=?,claimed_by=null,claim_until=null,claim_token=null where id=? and status_value in ('DEAD_LETTER','RETRY_SCHEDULED')";
         try(Connection c=connections.open();
         PreparedStatement s=c.prepareStatement(sql)){connections.strategy().bindInstant(s, 1, at);
@@ -122,6 +174,9 @@ final class JdbcOutboxRepository implements OutboxRepository {
         one(s,id,"outbox republishing");
     }catch(SQLException x){throw new WorkflowInfrastructureException("Failed outbox republishing "+id,x);
     }}
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<OutboxMessage> findPending(int limit){if(limit<1)throw new IllegalArgumentException("limit must be positive");
         String sql=TEXT_SELECT_PREFIX+COLUMNS+" from workflow_outbox where status_value in ('PENDING','CLAIMED','RETRY_SCHEDULED','DEAD_LETTER') order by coalesce(next_attempt_at,created_at),created_at,id limit ?";
         try(Connection c=connections.open();

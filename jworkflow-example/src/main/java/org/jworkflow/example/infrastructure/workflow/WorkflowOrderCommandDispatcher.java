@@ -19,12 +19,21 @@ public final class WorkflowOrderCommandDispatcher implements OrderCommandDispatc
     private final EventPublisher eventPublisher;
     private final OrderWorkflowEventMapper eventMapper;
 
+    /**
+     * Constructs WorkflowOrderCommandDispatcher with the supplied collaborators and configuration.
+     * @param service application order service invoked by the infrastructure adapter
+     * @param eventPublisher host event sink; publication guarantees depend on the supplied implementation
+     * @throws NullPointerException if service, eventPublisher is null
+     */
     public WorkflowOrderCommandDispatcher(OrderFulfillmentService service, EventPublisher eventPublisher) {
         this.service = Objects.requireNonNull(service, "service");
         this.eventPublisher = Objects.requireNonNull(eventPublisher, "eventPublisher");
         this.eventMapper = new OrderWorkflowEventMapper();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void dispatch(OrderCommand command) {
         Objects.requireNonNull(command, "command");

@@ -16,7 +16,13 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 
-/** Applies the same ordered SQL resources exposed to Flyway and Liquibase. */
+/**
+ * Applies the same ordered SQL resources exposed to Flyway and Liquibase.
+ *
+ * <p>These resources are SQLite V1 through V6. Existing V1 through V5 identities/checksums remain immutable.
+ * PostgreSQL uses its separate initializer and resource tree. Stop older workers before deploying the additive
+ * lease-token schema.</p>
+ */
 final class JdbcSchemaInitializer {
     private static final List<Migration> MIGRATIONS = List.of(
             new Migration(1, "create jworkflow schema", "db/migration/V1__create_jworkflow_schema.sql"),
@@ -126,5 +132,11 @@ final class JdbcSchemaInitializer {
                 .digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 
+    /**
+     * SQLite migration version, description and immutable classpath resource identity.
+     * @param version declared workflow or format version
+     * @param description the description
+     * @param resource the resource
+     */
     private record Migration(int version, String description, String resource) { }
 }

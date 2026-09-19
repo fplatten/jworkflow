@@ -4,7 +4,18 @@ import java.sql.*;
 
 /** Handles a PostgreSQL race where the same row violates both the primary and natural key. */
 final class JdbcDuplicateInsert {
-    @FunctionalInterface interface Winner { boolean matches() throws SQLException; }
+    /**
+     * Reads the committed duplicate winner under a fresh statement snapshot and checks both primary and natural
+     * identity.
+     */
+    @FunctionalInterface interface Winner {
+
+        /**
+         * Checks whether the stored duplicate winner matches the requested immutable identity and content.
+         * @return true when the condition described above holds; false otherwise
+         * @throws SQLException if the database operation fails
+         */
+        boolean matches() throws SQLException; }
     private JdbcDuplicateInsert(){ }
     static int execute(JdbcConnectionFactory factory,Connection connection,PreparedStatement statement,
                        String primaryConstraint,Winner winner) throws SQLException {

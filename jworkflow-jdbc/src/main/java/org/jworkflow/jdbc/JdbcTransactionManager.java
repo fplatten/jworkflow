@@ -10,7 +10,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-/** Thread-bound, joining transactions. Handlers are never automatically replayed. */
+/**
+ * Thread-bound, joining transactions. Handlers are never automatically replayed.
+ *
+ * <p>PostgreSQL adapter transactions use READ COMMITTED; SQLite logical write boundaries use BEGIN IMMEDIATE.
+ * Nested work joins the outer transaction and propagates rollback-only state. Borrowed connections must initially
+ * be idle and auto-commit enabled. Changed state is restored and connections close before queued callbacks run.
+ * Callback failure cannot undo a committed result. Unrelated host/JTA transactions are not enlisted.</p>
+ */
 public final class JdbcTransactionManager implements WorkflowTransactionManager {
     private final JdbcConnectionFactory connectionFactory;
     private final ThreadLocal<TransactionState> state = new ThreadLocal<>();
@@ -21,20 +28,36 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         this.connectionFactory = Objects.requireNonNull(connectionFactory, "connectionFactory");
     }
 
-    /** Installs an optional diagnostic sink for failures after the durable outcome is known. */
+    /**
+     * Installs an optional diagnostic sink for failures after the durable outcome is known.
+     * @param handler application callback for the selected action
+     * @throws NullPointerException if handler is null
+     */
     public void setCompletionFailureHandler(Consumer<Throwable> handler) {
         completionFailureHandler = Objects.requireNonNull(handler, "handler");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public boolean supportsAfterCommit() { return true; }
+    /**
+     * {@inheritDoc}
+     */
     @Override public boolean isTransactionActive() { return state.get()!=null; }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void afterCommit(Runnable notification) {
         Objects.requireNonNull(notification, "notification");
         TransactionState current = state.get();
         if (current == null) flush(List.of(notification)); else current.notifications.add(notification);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void reportCompletionFailure(Throwable failure) {
         Consumer<Throwable> handler = completionFailureHandler;
         if (handler == null) WorkflowTransactionManager.super.reportCompletionFailure(failure);
@@ -57,11 +80,17 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         finally { completing.remove(); }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void execute(WorkflowTransaction transaction) {
         Objects.requireNonNull(transaction, "transaction");
         inTransaction(() -> { transaction.execute(); return null; });
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public <T> T inTransaction(WorkflowTransactionalWork<T> work) {
         return executeInternal(work, false);
     }
@@ -77,7 +106,12 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         return executeInternal(work, true);
     }
 
-    /** Compatibility alias for {@link #inWriteTransaction(WorkflowTransactionalWork)}. */
+    /**
+     * Compatibility alias for {@link #inWriteTransaction(WorkflowTransactionalWork)}.
+     * @param <T> the result type
+     * @param work work executed inside the transaction boundary
+     * @return the value produced by the work
+     */
     public <T> T inImmediateTransaction(WorkflowTransactionalWork<T> work) {
         return inWriteTransaction(work);
     }
@@ -193,6 +227,9 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         return new JdbcTransactionException(phase, failure);
     }
 
+    /**
+     * Thread-bound rollback-only state and ordered deferred notifications for one outer transaction.
+     */
     private static final class TransactionState {
         boolean rollbackOnly;
         Throwable firstFailure;

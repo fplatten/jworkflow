@@ -9,6 +9,10 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.*;
 
+/**
+ * JDBC append-only event history. PostgreSQL allocates per-instance sequence numbers transactionally through a
+ * counter table; direct appends and engine commands use the same allocation path.
+ */
 final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
     private static final String COLUMNS = "id,event_type,source_system,correlation_id,causation_id,trace_id,workflow_instance_id,business_key,tenant_id,taxonomy_version,occurred_at,received_at,headers,message_payload,message_content_type,message_schema_name,message_schema_version,message_redaction_status,message_payload_blob";
     private static final String TEXT_SELECT_PREFIX = "select ";
@@ -20,6 +24,9 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
         this.json=json;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void append(WorkflowEvent event) {
         if (connections.currentTransactionConnection() == null) {
             new JdbcTransactionManager(connections).inWriteTransaction(() -> { appendWithinTransaction(event); return null; });
@@ -74,6 +81,9 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<WorkflowEvent> find(UUID eventId) {
         try(Connection connection=connections.open();
             PreparedStatement statement=connection.prepareStatement(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_event where id=?")) {
@@ -84,6 +94,9 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowEvent> findByWorkflowInstance(WorkflowInstanceId instanceId) {
         String sql=TEXT_SELECT_PREFIX+COLUMNS+" from workflow_event where workflow_instance_id=? order by sequence_number nulls first,id";
         try(Connection connection=connections.open();
@@ -98,6 +111,9 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowEvent> findAllAfter(Instant after,int limit){if(limit<1)throw new IllegalArgumentException("limit must be positive");
         String sql=TEXT_SELECT_PREFIX+COLUMNS+" from workflow_event where occurred_at>? order by occurred_at,id limit ?";
         try(Connection c=connections.open();

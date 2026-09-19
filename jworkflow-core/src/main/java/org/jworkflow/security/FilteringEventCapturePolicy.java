@@ -9,6 +9,12 @@ public final class FilteringEventCapturePolicy implements EventCapturePolicy {
     private final Set<String> removedAttributes;
     private final boolean redactPayload;
 
+    /**
+     * Constructs FilteringEventCapturePolicy with the supplied collaborators and configuration.
+     * @param removedHeaders header names removed by the capture policy
+     * @param removedAttributes message attribute names removed by the capture policy
+     * @param redactPayload whether to remove the body and mark the message as redacted
+     */
     public FilteringEventCapturePolicy(Set<String> removedHeaders, Set<String> removedAttributes,
             boolean redactPayload) {
         this.removedHeaders = normalized(removedHeaders);
@@ -16,10 +22,18 @@ public final class FilteringEventCapturePolicy implements EventCapturePolicy {
         this.redactPayload = redactPayload;
     }
 
+    /**
+     * Creates a policy removing the named headers while retaining message attributes and payload.
+     * @param headers event or command headers; secrets should be removed by the configured capture policy
+     * @return the resulting filtering event capture policy
+     */
     public static FilteringEventCapturePolicy removeHeaders(Set<String> headers) {
         return new FilteringEventCapturePolicy(headers, Set.of(), false);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowEvent filter(WorkflowEvent event) {
         Objects.requireNonNull(event, "event");
         EventMetadata metadata = event.metadata();

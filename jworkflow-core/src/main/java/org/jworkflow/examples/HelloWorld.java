@@ -6,11 +6,19 @@ import org.jworkflow.model.*;
 import java.util.Map;
 import java.util.logging.Logger;
 
+/**
+ * Minimal executable demonstration of defining and running an in-memory workflow.
+ */
 public final class HelloWorld {
     private static final Logger LOGGER = Logger.getLogger(HelloWorld.class.getName());
     private HelloWorld() {
     }
 
+    /**
+     * Runs this executable example using the supplied command-line configuration.
+     * @param args command-line arguments for the example
+     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     */
     public static void main(String[] args) throws ClassNotFoundException {
         WorkflowEngine workflowEngine = WorkflowEngine.builder()
                 .type(WorkflowEngine.Type.IN_MEMORY)

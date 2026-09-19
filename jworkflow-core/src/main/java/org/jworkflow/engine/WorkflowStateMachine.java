@@ -31,10 +31,10 @@ public final class WorkflowStateMachine {
 
     /**
      * Returns an isolated calculator using the supplied exact definition revision.
-     * The original registry and other concurrent calculations are unchanged.
-     *
+     *  The original registry and other concurrent calculations are unchanged.
      * @param definition persisted definition for the instance being evaluated
      * @return calculator with that revision selected for its name and version
+     * @throws NullPointerException if definition is null
      */
     public WorkflowStateMachine withDefinitionRevision(org.jworkflow.model.WorkflowDefinition definition) {
         Objects.requireNonNull(definition, "definition");
@@ -44,6 +44,14 @@ public final class WorkflowStateMachine {
         return new WorkflowStateMachine(selected, stepHandlers, conditions, workflowStartEvents, listeners, clock);
     }
 
+    /**
+     * Constructs WorkflowStateMachine with the supplied collaborators and configuration.
+     * @param definitions registry of selected workflow definitions
+     * @param stepHandlers handlers indexed by declared action name
+     * @param conditions declarative condition evaluator and registered predicates
+     * @param workflowStartEvents mapping from event names to workflows started in supported runtime modes
+     * @param listeners infrastructure listeners indexed by registered identity
+     */
     public WorkflowStateMachine(WorkflowDefinitionRegistry definitions,
                                 Map<String, StepHandler> stepHandlers,
                                 BranchConditionEvaluator conditions,
@@ -52,6 +60,16 @@ public final class WorkflowStateMachine {
         this(definitions, stepHandlers, conditions, workflowStartEvents, listeners, Clock.systemUTC());
     }
 
+    /**
+     * Constructs WorkflowStateMachine with the supplied collaborators and configuration.
+     * @param definitions registry of selected workflow definitions
+     * @param stepHandlers handlers indexed by declared action name
+     * @param conditions declarative condition evaluator and registered predicates
+     * @param workflowStartEvents mapping from event names to workflows started in supported runtime modes
+     * @param listeners infrastructure listeners indexed by registered identity
+     * @param clock clock used for recorded times and lease/retry decisions
+     * @throws NullPointerException if definitions, conditions, clock is null
+     */
     public WorkflowStateMachine(WorkflowDefinitionRegistry definitions,
                                 Map<String, StepHandler> stepHandlers,
                                 BranchConditionEvaluator conditions,
@@ -66,6 +84,11 @@ public final class WorkflowStateMachine {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * Calculates the initial snapshot, events and timers without persisting them.
+     * @param command command to validate and execute
+     * @return the resulting workflow transition result&lt;start workflow result&gt;
+     */
     public WorkflowTransitionResult<StartWorkflowResult> start(StartWorkflowCommand command) {
         Session session = session(null, List.of());
         StartWorkflowResult result = session.engine.start(command);
@@ -77,13 +100,26 @@ public final class WorkflowStateMachine {
                 new WorkflowMutation(null, normalized, session.events, List.of(), session.engine.allTimers()));
     }
 
+    /**
+     * Calculates signal effects from the supplied snapshot and timer state; the caller owns atomic persistence.
+     * @param current current persisted workflow snapshot
+     * @param timers current timer occurrences associated with the instance
+     * @param command command to validate and execute
+     * @return the resulting workflow transition result&lt;workflow command result&gt;
+     */
     public WorkflowTransitionResult<WorkflowCommandResult> signal(WorkflowSnapshot current,
                                                                    List<WorkflowTimer> timers,
                                                                    SignalWorkflowCommand command) {
         return command(current, timers, engine -> engine.signal(command));
     }
 
-    /** Side-effect-free event eligibility check used before durable routing mutates a snapshot. */
+    /**
+     * Side-effect-free event eligibility check used before durable routing mutates a snapshot.
+     * @param snapshot point-in-time workflow snapshot
+     * @param event event to deliver or inspect
+     * @return true when the condition described above holds; false otherwise
+     * @throws NullPointerException if snapshot, event is null
+     */
     public boolean accepts(WorkflowSnapshot snapshot, WorkflowEvent event) {
         Objects.requireNonNull(snapshot, "snapshot");
         Objects.requireNonNull(event, "event");
@@ -103,24 +139,56 @@ public final class WorkflowStateMachine {
                 && eventName.equals(definition.metadata().get("startEvent"));
     }
 
+    /**
+     * Calculates a failed-step retry and its durable effects; the caller owns commit and side-effect
+     * reconciliation.
+     * @param current current persisted workflow snapshot
+     * @param timers current timer occurrences associated with the instance
+     * @param command command to validate and execute
+     * @return the resulting workflow transition result&lt;workflow command result&gt;
+     */
     public WorkflowTransitionResult<WorkflowCommandResult> retry(WorkflowSnapshot current,
                                                                   List<WorkflowTimer> timers,
                                                                   RetryFailedStepCommand command) {
         return command(current, timers, engine -> engine.retryFailedStep(command));
     }
 
+    /**
+     * Calculates cancellation and timer changes without writing repositories.
+     * @param current current persisted workflow snapshot
+     * @param timers current timer occurrences associated with the instance
+     * @param command command to validate and execute
+     * @return the resulting workflow transition result&lt;workflow command result&gt;
+     */
     public WorkflowTransitionResult<WorkflowCommandResult> cancel(WorkflowSnapshot current,
                                                                    List<WorkflowTimer> timers,
                                                                    CancelWorkflowCommand command) {
         return command(current, timers, engine -> engine.cancel(command));
     }
 
+    /**
+     * Calculates resume effects from the supplied persisted state.
+     * @param current current persisted workflow snapshot
+     * @param timers current timer occurrences associated with the instance
+     * @param command command to validate and execute
+     * @return the resulting workflow transition result&lt;workflow command result&gt;
+     */
     public WorkflowTransitionResult<WorkflowCommandResult> resume(WorkflowSnapshot current,
                                                                    List<WorkflowTimer> timers,
                                                                    ResumeWorkflowCommand command) {
         return command(current, timers, engine -> engine.resume(command));
     }
 
+    /**
+     * Calculates effects for a leased timer. The caller must validate/fence the acquisition and persist all
+     * effects atomically.
+     * @param current current persisted workflow snapshot
+     * @param timers current timer occurrences associated with the instance
+     * @param claimedTimer timer and acquisition generation currently being processed
+     * @param now clock instant used for eligibility or retry calculation
+     * @return the resulting workflow transition result&lt;workflow timer&gt;
+     * @throws NullPointerException if current, claimedTimer is null
+     */
     public WorkflowTransitionResult<WorkflowTimer> fireTimer(WorkflowSnapshot current,
                                                               List<WorkflowTimer> timers,
                                                               WorkflowTimer claimedTimer,
@@ -169,6 +237,11 @@ public final class WorkflowStateMachine {
         return new Session(engine, staged);
     }
 
+    /**
+     * Isolated transient engine session collecting events for one transition calculation.
+     * @param engine engine whose lifetime remains the caller's responsibility
+     * @param events workflow events in their supplied order
+     */
     private record Session(InMemoryWorkflowEngine engine, List<WorkflowEvent> events) { }
 
     private static WorkflowSnapshot withLockVersion(WorkflowSnapshot snapshot, long version) {

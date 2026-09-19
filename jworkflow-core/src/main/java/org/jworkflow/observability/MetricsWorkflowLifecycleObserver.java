@@ -4,13 +4,25 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Maps lifecycle observations to the supplied metrics boundary. It does not introduce a metrics-library
+ * dependency.
+ */
 public final class MetricsWorkflowLifecycleObserver implements WorkflowLifecycleObserver {
     private final WorkflowMetrics metrics;
 
+    /**
+     * Constructs MetricsWorkflowLifecycleObserver with the supplied collaborators and configuration.
+     * @param metrics host metrics implementation
+     * @throws NullPointerException if metrics is null
+     */
     public MetricsWorkflowLifecycleObserver(WorkflowMetrics metrics) {
         this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void observe(WorkflowLifecycleEvent event) {
         String metric = switch (event.type()) {

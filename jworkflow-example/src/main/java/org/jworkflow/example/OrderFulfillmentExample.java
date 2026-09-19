@@ -18,15 +18,31 @@ import java.time.Instant;
 import java.util.List;
 import java.util.logging.Logger;
 
+/**
+ * Executable in-memory composition root wiring the order service, command dispatcher, workflow definition and
+ * listeners.
+ */
 public final class OrderFulfillmentExample {
     private static final Logger LOGGER = Logger.getLogger(OrderFulfillmentExample.class.getName());
     private OrderFulfillmentExample() {
     }
 
+    /**
+     * Starts the demonstration order. The no-argument overload owns an in-memory engine, waits for completion and
+     * closes it.
+     * @param commandDispatcher application command boundary
+     */
     public static void runSuccessfulOrder(OrderCommandDispatcher commandDispatcher) {
         commandDispatcher.dispatch(new CreateOrderCommand("order-1001"));
     }
 
+    /**
+     * Starts the demonstration order. The no-argument overload owns an in-memory engine, waits for completion and
+     * closes it.
+     * @return the instance snapshot
+     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     * @throws InterruptedException if the operation is interrupted
+     */
     public static WorkflowSnapshot runSuccessfulOrder() throws ClassNotFoundException, InterruptedException {
         WorkflowEngine.clearInstance();
         OrderFulfillmentService orderService = new OrderFulfillmentService();
@@ -45,6 +61,11 @@ public final class OrderFulfillmentExample {
         }
     }
 
+    /**
+     * Runs this executable example using the supplied command-line configuration.
+     * @param args command-line arguments for the example
+     * @throws Exception if the operation cannot complete
+     */
     public static void main(String[] args) throws Exception {
         WorkflowEngine.clearInstance();
         OrderFulfillmentService orderService = new OrderFulfillmentService();

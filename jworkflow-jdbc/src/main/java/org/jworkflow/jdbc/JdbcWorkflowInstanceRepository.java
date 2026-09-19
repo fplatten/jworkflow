@@ -14,6 +14,10 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.*;
 
+/**
+ * JDBC snapshot storage with optimistic version checks and bounded instance queries. PostgreSQL uses exact numeric
+ * time and deterministic string collation; SQLite retains its existing ISO text representation.
+ */
 final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository {
     private static final String COLUMNS = "id, workflow_key, workflow_version, workflow_revision, business_key, correlation_id, current_state, status, variables, lock_version, created_at, updated_at";
     private static final String TEXT_SELECT_PREFIX = "select ";
@@ -30,6 +34,9 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
         this.jsonCodec = Objects.requireNonNull(jsonCodec);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public void insert(WorkflowSnapshot snapshot) {
         String sql = """
                 insert into workflow_instance (
@@ -57,6 +64,9 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public WorkflowSnapshot update(WorkflowSnapshot snapshot, long expectedLockVersion) {
         if (snapshot.lockVersion() != expectedLockVersion + 1) {
             throw new IllegalArgumentException("Updated snapshot lockVersion must equal expectedLockVersion + 1");
@@ -87,10 +97,16 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<WorkflowSnapshot> findById(WorkflowInstanceId id) {
         return findOne(TEXT_SELECT_PREFIX + COLUMNS + " from workflow_instance where id = ?", id.toString());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<WorkflowSnapshot> findByCorrelationId(String correlationId) {
         if (correlationId == null || correlationId.isBlank()) return Optional.empty();
         List<WorkflowSnapshot> matches=queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where correlation_id=? order by updated_at,id limit 2",correlationId);
@@ -98,26 +114,41 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
         return matches.stream().findFirst();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<WorkflowSnapshot> findActiveById(WorkflowInstanceId id) {
         return findOne(TEXT_SELECT_PREFIX + COLUMNS + " from workflow_instance where id = ? and status in ('RUNNING','WAITING','FAILED')", id.toString());
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowSnapshot> findActiveByCorrelation(String workflowKey,String correlationId,int limit) {
         requireRoute(workflowKey,correlationId,limit);
         return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where workflow_key=? and correlation_id=? and status in ('RUNNING','WAITING','FAILED') order by updated_at,id limit ?",workflowKey,correlationId,limit);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowSnapshot> findActiveByBusinessKey(String workflowKey,String businessKey,int limit) {
         requireRoute(workflowKey,businessKey,limit);
         return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where workflow_key=? and business_key=? and status in ('RUNNING','WAITING','FAILED') order by updated_at,id limit ?",workflowKey,businessKey,limit);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowSnapshot> findActiveAfter(ActiveWorkflowCursor cursor,int limit) {
         if(limit<1)throw new IllegalArgumentException(TEXT_LIMIT_MUST_BE_POSITIVE);
         if(cursor==null)return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where status in ('RUNNING','WAITING','FAILED') order by updated_at,id limit ?",limit);
         return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where status in ('RUNNING','WAITING','FAILED') and (updated_at>? or (updated_at=? and id>?)) order by updated_at,id limit ?",cursor.updatedAt(),cursor.updatedAt(),cursor.instanceId().toString(),limit);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public Optional<WorkflowSnapshot> findByBusinessKey(String workflowKey, String businessKey) {
         if (workflowKey == null || workflowKey.isBlank() || businessKey == null || businessKey.isBlank()) return Optional.empty();
         String sql = TEXT_SELECT_PREFIX + COLUMNS + " from workflow_instance where workflow_key = ? and business_key = ? order by created_at desc,id desc limit 1";
@@ -132,6 +163,9 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowSnapshot> findActive(int limit) {
         if (limit < 1) throw new IllegalArgumentException(TEXT_LIMIT_MUST_BE_POSITIVE);
         String sql = TEXT_SELECT_PREFIX + COLUMNS + " from workflow_instance where status in ('RUNNING','WAITING','FAILED') order by updated_at, id limit ?";
@@ -148,17 +182,26 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowSnapshot> findAll(int limit, int offset) {
         requirePage(limit,offset);
             return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance order by created_at,id limit ? offset ?",limit,offset);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowSnapshot> findByStatus(WorkflowStatus status,int limit) {
         Objects.requireNonNull(status,"status");
             if(limit<1)throw new IllegalArgumentException(TEXT_LIMIT_MUST_BE_POSITIVE);
         return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where status=? order by updated_at,id limit ?",status.name(),limit);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override public List<WorkflowSnapshot> findStuck(Instant updatedBefore,int limit) {
         Objects.requireNonNull(updatedBefore,"updatedBefore");
             if(limit<1)throw new IllegalArgumentException(TEXT_LIMIT_MUST_BE_POSITIVE);

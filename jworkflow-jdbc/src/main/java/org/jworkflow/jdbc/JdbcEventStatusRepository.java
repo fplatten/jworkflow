@@ -13,6 +13,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * JDBC append-only event-status history participating in the bundle's transaction connection.
+ */
 final class JdbcEventStatusRepository implements EventStatusRepository {
     private final JdbcConnectionFactory connectionFactory;
 
@@ -20,6 +23,9 @@ final class JdbcEventStatusRepository implements EventStatusRepository {
         this.connectionFactory = connectionFactory;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void append(EventStatusAttempt attempt) {
         String sql = """
@@ -72,6 +78,9 @@ final class JdbcEventStatusRepository implements EventStatusRepository {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public List<EventStatusAttempt> findAttempts(UUID eventId) {
         String sql = """

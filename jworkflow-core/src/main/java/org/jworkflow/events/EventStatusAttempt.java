@@ -6,6 +6,29 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * Immutable audit entry for event processing or publication status. Repositories append attempts rather than
+ *  editing earlier history.
+ * @param statusId identity of the append-only status record
+ * @param eventId event identity associated with the message or history row
+ * @param attemptId identity of the immutable attempt record
+ * @param attemptNumber one-based attempt number
+ * @param idempotencyKey complete replay/deduplication key; retain the same key when reconciling an uncertain
+ *      outcome
+ * @param workflowInstanceId workflow instance identity associated with the operation
+ * @param correlationId identity shared by related commands and events
+ * @param scope processing boundary represented by the status attempt
+ * @param handlerId subscriber or handler identity used for audit
+ * @param destination registered publication destination
+ * @param status observed event-processing outcome
+ * @param retryCount number of publication retries already recorded
+ * @param nextRetryAt next retry deadline, when another attempt is scheduled
+ * @param retryEligible whether another attempt is permitted
+ * @param terminal whether this attempt ends processing rather than scheduling another retry
+ * @param lastErrorCode stable code of the latest failure
+ * @param lastErrorMessage human-readable detail of the latest failure
+ * @param createdAt creation time
+ */
 public record EventStatusAttempt(
         UUID statusId,
         UUID eventId,
@@ -26,6 +49,30 @@ public record EventStatusAttempt(
         String lastErrorMessage,
         Instant createdAt
 ) {
+    /**
+     * Creates this value from the supplied components.
+     * @param statusId identity of the append-only status record
+     * @param eventId event identity associated with the message or history row
+     * @param attemptId identity of the immutable attempt record
+     * @param attemptNumber one-based attempt number
+     * @param idempotencyKey complete replay/deduplication key; retain the same key when reconciling an uncertain
+     *      outcome
+     * @param workflowInstanceId workflow instance identity associated with the operation
+     * @param correlationId identity shared by related commands and events
+     * @param scope processing boundary represented by the status attempt
+     * @param handlerId subscriber or handler identity used for audit
+     * @param destination registered publication destination
+     * @param status observed event-processing outcome
+     * @param retryCount number of publication retries already recorded
+     * @param nextRetryAt next retry deadline, when another attempt is scheduled
+     * @param retryEligible whether another attempt is permitted
+     * @param terminal whether this attempt ends processing rather than scheduling another retry
+     * @param lastErrorCode stable code of the latest failure
+     * @param lastErrorMessage human-readable detail of the latest failure
+     * @param createdAt creation time
+     * @throws NullPointerException if eventId, scope, status is null
+     * @throws IllegalArgumentException if the supplied values violate the operation's constraints
+     */
     public EventStatusAttempt {
         statusId = statusId == null ? UUID.randomUUID() : statusId;
         Objects.requireNonNull(eventId, "eventId");
@@ -43,6 +90,15 @@ public record EventStatusAttempt(
         createdAt = createdAt == null ? Instant.now() : createdAt;
     }
 
+    /**
+     * Creates an append-only failure observation for a subscriber invocation.
+     * @param event event to deliver or inspect
+     * @param handlerId subscriber or handler identity used for audit
+     * @param attemptNumber one-based attempt number
+     * @param error failure detail to record or report
+     * @return the resulting event status attempt
+     * @throws NullPointerException if event, error is null
+     */
     public static EventStatusAttempt listenerFailure(
             WorkflowEvent event,
             String handlerId,
