@@ -29,6 +29,21 @@ public final class WorkflowStateMachine {
     private final Map<String, Object> listeners;
     private final Clock clock;
 
+    /**
+     * Returns an isolated calculator using the supplied exact definition revision.
+     * The original registry and other concurrent calculations are unchanged.
+     *
+     * @param definition persisted definition for the instance being evaluated
+     * @return calculator with that revision selected for its name and version
+     */
+    public WorkflowStateMachine withDefinitionRevision(org.jworkflow.model.WorkflowDefinition definition) {
+        Objects.requireNonNull(definition, "definition");
+        WorkflowDefinitionRegistry selected = new WorkflowDefinitionRegistry();
+        definitions.snapshot().values().stream().filter(d -> !d.key().equals(definition.key())).forEach(selected::register);
+        selected.register(definition);
+        return new WorkflowStateMachine(selected, stepHandlers, conditions, workflowStartEvents, listeners, clock);
+    }
+
     public WorkflowStateMachine(WorkflowDefinitionRegistry definitions,
                                 Map<String, StepHandler> stepHandlers,
                                 BranchConditionEvaluator conditions,

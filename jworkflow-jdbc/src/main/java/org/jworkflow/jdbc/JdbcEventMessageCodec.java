@@ -9,19 +9,31 @@ import java.sql.Types;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Arrays;
+import java.util.Objects;
 
 /** Maps the common inbox/outbox event envelope to its shared JDBC columns. */
 final class JdbcEventMessageCodec {
     private final JdbcJsonCodec json = new JdbcJsonCodec();
 
-    void bind(PreparedStatement statement, int index, EventMessage message) throws SQLException {
+    /** Compare persisted envelope content, including copied binary arrays and canonical JSON values. */
+    boolean sameContent(EventMessage first,EventMessage second) {
+        boolean samePayload;
+        if(first.payload() instanceof byte[] left) samePayload=second.payload() instanceof byte[] right && Arrays.equals(left,right);
+        else samePayload=!(second.payload() instanceof byte[]) && json.write(first.payload()).equals(json.write(second.payload()));
+        return samePayload && Objects.equals(first.contentType(),second.contentType())
+                && Objects.equals(first.schemaName(),second.schemaName()) && Objects.equals(first.schemaVersion(),second.schemaVersion())
+                && first.redacted()==second.redacted() && first.attributes().equals(second.attributes());
+    }
+
+    void bind(PreparedStatement statement, int index, EventMessage message, JdbcDatabaseStrategy strategy) throws SQLException {
         Object payload = message.payload();
         if (payload instanceof byte[] binary) {
             statement.setNull(index, Types.VARCHAR);
             statement.setBytes(index + 1, binary);
         } else {
             statement.setString(index, json.write(payload));
-            statement.setNull(index + 1, Types.BLOB);
+            statement.setNull(index + 1, strategy.binaryNullType());
         }
         statement.setString(index + 2, message.contentType());
         statement.setString(index + 3, message.schemaName());

@@ -330,22 +330,22 @@ public final class WorkflowEngineBuilder {
                     listenerInstances,
                     persistence,
                     eventCapturePolicy);
-            case SQLITE -> createJdbcEngine(properties, definitions, eventPublisher, stepHandlers,
+            case SQLITE, POSTGRESQL -> createJdbcEngine(properties, definitions, eventPublisher, stepHandlers,
                     branchConditionEvaluator, workflowStartEvents, listenerInstances, lifecycleObserver, clock,
                     eventCapturePolicy);
         };
     }
 
     private void validateConfiguration() {
-        if (type == WorkflowEngine.Type.SQLITE) {
+        if (type != WorkflowEngine.Type.IN_MEMORY) {
             if (dataSource == null && (jdbcUrl == null || jdbcUrl.isBlank())) {
-                throw new IllegalStateException("SQLITE durable mode requires jdbcUrl or dataSource");
+                throw new IllegalStateException(type + " durable mode requires jdbcUrl or dataSource");
             }
             if (persistence != null) {
-                throw new IllegalStateException("SQLITE durable mode owns its JDBC persistence; do not also configure persistence(...)");
+                throw new IllegalStateException(type + " durable mode owns its JDBC persistence; do not also configure persistence(...)");
             }
         } else if (jdbcUrl != null || driver != null || dataSource != null || initializeSchema) {
-            throw new IllegalStateException("JDBC configuration requires explicit SQLITE engine type");
+            throw new IllegalStateException("JDBC configuration requires explicit SQLITE or POSTGRESQL engine type");
         }
     }
 

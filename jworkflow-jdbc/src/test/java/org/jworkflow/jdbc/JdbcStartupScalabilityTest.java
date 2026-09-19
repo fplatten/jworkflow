@@ -39,7 +39,7 @@ public final class JdbcStartupScalabilityTest {
     private static void corruptInstanceIsIsolatedUntilAccess() throws Exception {
         String url=fixture("isolation");WorkflowDefinition definition=definition("isolated");WorkflowInstanceId good,bad;
         try(JdbcWorkflowEngine engine=engine(url,true,2,definition)){good=engine.start("isolated","good",Map.of());bad=engine.start("isolated","bad",Map.of());}
-        try(var connection=DriverManager.getConnection(url);var statement=connection.prepareStatement("update workflow_instance set workflow_revision='missing' where id=?")){statement.setString(1,bad.toString());statement.executeUpdate();}
+        try(var connection=ContractBackend.open(url);var statement=connection.prepareStatement("update workflow_instance set workflow_revision='missing' where id=?")){statement.setString(1,bad.toString());statement.executeUpdate();}
         try(JdbcWorkflowEngine lazy=engine(url,true,2)){
             WorkflowEvent event=event(good,"good");lazy.route(event,WorkflowEventRoute.exact(good,event.eventName()));
             check(lazy.snapshot(good).status()==WorkflowStatus.COMPLETED,"valid workflow could not progress beside corrupt workflow");
@@ -56,8 +56,8 @@ public final class JdbcStartupScalabilityTest {
 
     private static WorkflowDefinition definition(String name){return WorkflowDefinition.of(name,"1","waiting",WorkflowNode.waitFor("waiting",new WaitDefinition(new EventName("tax.completed"),"employeeId","done"),null),WorkflowNode.end("done"));}
     private static WorkflowEvent event(WorkflowInstanceId id,String business){Instant now=Instant.now();return new WorkflowEvent(new EventMetadata(null,new EventName("tax.completed"),"test","corr",null,null,id,business,null,"1",now,now,Map.of()),EventMessage.json(Map.of("received",true)));}
-    private static JdbcWorkflowEngine engine(String url,boolean lazy,int batch,WorkflowDefinition...definitions)throws Exception{WorkflowEngineBuilder builder=WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl(url).initialize().timerPolling(false).lazyDefinitionValidation(lazy).startupValidationBatchSize(batch);for(WorkflowDefinition definition:definitions)builder.definition(definition);return(JdbcWorkflowEngine)builder.build();}
-    private static String fixture(String name)throws Exception{Path file=Files.createTempFile("jworkflow-startup-"+name+"-",".sqlite");return"jdbc:sqlite:"+file.toAbsolutePath();}
+    private static JdbcWorkflowEngine engine(String url,boolean lazy,int batch,WorkflowDefinition...definitions)throws Exception{WorkflowEngineBuilder builder=ContractBackend.engine(url).initialize().timerPolling(false).lazyDefinitionValidation(lazy).startupValidationBatchSize(batch);for(WorkflowDefinition definition:definitions)builder.definition(definition);return(JdbcWorkflowEngine)builder.build();}
+    private static String fixture(String name)throws Exception{Path file=Files.createTempFile("jworkflow-startup-"+name+"-",".sqlite");return ContractBackend.url(file.toAbsolutePath());}
     private static void expectFailure(Runnable operation){try{operation.run();throw new AssertionError("Expected bounded configuration failure");}catch(IllegalArgumentException expected){ }}
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
     @org.junit.jupiter.api.Test

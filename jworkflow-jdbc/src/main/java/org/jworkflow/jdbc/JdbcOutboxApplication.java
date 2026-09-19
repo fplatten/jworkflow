@@ -45,9 +45,11 @@ public final class JdbcOutboxApplication implements AutoCloseable {
         publisher=new OutboxPublisherService(persistence.outbox(),persistence.eventStatuses(),persistence.transactions(),routed,retry,clock,observer);
             republishing=new OutboxRepublishingService(persistence.outbox(),persistence.transactions());
         }
-    public int pollOnce(){Instant now=clock.instant();
+    public int pollOnce(){
+        if(persistence.transactions().isTransactionActive())throw new IllegalStateException("Outbox polling requires its own transaction boundaries");
+        Instant now=clock.instant();
         persistence.transactions().execute(()->persistence.outbox().releaseExpiredClaims(now));
-        List<OutboxMessage> claimed=persistence.jdbcTransactions().inImmediateTransaction(()->persistence.outbox().claimEligible(now,workerId,now.plus(lease),batchSize));
+        List<OutboxMessage> claimed=persistence.jdbcTransactions().inWriteTransaction(()->persistence.outbox().claimEligibleFenced(now,workerId,now.plus(lease),batchSize));
         for(OutboxMessage message:claimed)publisher.publish(message,workerId);
         return claimed.size();
     }

@@ -13,6 +13,12 @@ public interface OutboxRepository {
     Optional<OutboxMessage> findById(UUID messageId);
     Optional<OutboxMessage> findByIdempotencyKey(String destination, String idempotencyKey);
     List<OutboxMessage> claimEligible(Instant now, String ownerId, Instant claimUntil, int limit);
+    default List<OutboxMessage> claimEligibleFenced(Instant now,String owner,Instant until,int limit){throw new UnsupportedOperationException("Fenced outbox claims are not supported");}
+    /** Validate and hold this generation against reclaim until the enclosing transaction ends. */
+    default void requireClaim(UUID id,String owner,String token){throw new UnsupportedOperationException("Fenced outbox claims are not supported");}
+    default void markPublished(UUID id,String owner,String token,Instant at){throw new UnsupportedOperationException("Fenced outbox completion is not supported");}
+    default void scheduleRetry(UUID id,String owner,String token,Instant next,String error){throw new UnsupportedOperationException("Fenced outbox retry is not supported");}
+    default void markDeadLetter(UUID id,String owner,String token,String error,Instant at){throw new UnsupportedOperationException("Fenced outbox dead letter is not supported");}
     void markPublished(UUID messageId, String ownerId, Instant publishedAt);
     void scheduleRetry(UUID messageId, String ownerId, Instant nextAttemptAt, String error);
     void markDeadLetter(UUID messageId, String ownerId, String error, Instant deadLetteredAt);

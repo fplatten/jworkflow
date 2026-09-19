@@ -28,4 +28,8 @@
         <sqlFile path="db/migration/V5__message_redaction_status.sql"
                  relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
     </changeSet>
+    <changeSet id="006-lease-generation-fencing" author="org.jworkflow">
+        <sqlFile path="db/migration/V6__lease_generation_fencing.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
 </databaseChangeLog>

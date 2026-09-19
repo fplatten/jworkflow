@@ -98,7 +98,7 @@ public final class JdbcTransactionSchemaContractTest {
         JdbcSchemaInitializer.initialize(factory);
         JdbcSchemaInitializer.initialize(factory);
         try (Connection connection = factory.open()) {
-            check(scalar(connection, "select count(*) from jworkflow_schema_history") == 5,
+            check(scalar(connection, "select count(*) from jworkflow_schema_history") == 6,
                     "initializer must record each migration exactly once");
         }
     }
@@ -296,7 +296,11 @@ public final class JdbcTransactionSchemaContractTest {
         private int isolation = Connection.TRANSACTION_READ_COMMITTED;
         private final Connection proxy = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
                 new Class<?>[]{Connection.class}, (ignored, method, args) -> switch (method.getName()) {
+                    case "getMetaData" -> Proxy.newProxyInstance(DatabaseMetaData.class.getClassLoader(),
+                            new Class<?>[]{DatabaseMetaData.class}, (p, m, a) ->
+                                    "getDatabaseProductName".equals(m.getName()) ? "PostgreSQL" : defaultValue(m.getReturnType()));
                     case "getAutoCommit" -> autoCommit;
+                    case "createStatement" -> TransactionTestDataSource.validationStatement();
                     case "setAutoCommit" -> { autoCommit = (boolean) args[0]; yield null; }
                     case "isReadOnly" -> readOnly;
                     case "setReadOnly" -> { readOnly = (boolean) args[0]; yield null; }

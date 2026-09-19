@@ -49,8 +49,8 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
             statement.setString(8, snapshot.status().name());
             statement.setString(9, jsonCodec.write(snapshot.variables()));
             statement.setLong(10, snapshot.lockVersion());
-            statement.setString(11, snapshot.createdAt().toString());
-            statement.setString(12, snapshot.updatedAt().toString());
+            connectionFactory.strategy().bindInstant(statement, 11, snapshot.createdAt());
+            connectionFactory.strategy().bindInstant(statement, 12, snapshot.updatedAt());
             statement.executeUpdate();
         } catch (SQLException exception) {
             throw new WorkflowInfrastructureException("Failed to insert workflow instance " + snapshot.instanceId(), exception);
@@ -71,7 +71,7 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
             statement.setString(2, snapshot.status().name());
             statement.setString(3, jsonCodec.write(snapshot.variables()));
             statement.setString(4, snapshot.correlationId());
-            statement.setString(5, snapshot.updatedAt().toString());
+            connectionFactory.strategy().bindInstant(statement, 5, snapshot.updatedAt());
             statement.setLong(6, snapshot.lockVersion());
             statement.setString(7, snapshot.instanceId().toString());
             statement.setLong(8, expectedLockVersion);
@@ -115,12 +115,12 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
     @Override public List<WorkflowSnapshot> findActiveAfter(ActiveWorkflowCursor cursor,int limit) {
         if(limit<1)throw new IllegalArgumentException(TEXT_LIMIT_MUST_BE_POSITIVE);
         if(cursor==null)return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where status in ('RUNNING','WAITING','FAILED') order by updated_at,id limit ?",limit);
-        return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where status in ('RUNNING','WAITING','FAILED') and (updated_at>? or (updated_at=? and id>?)) order by updated_at,id limit ?",cursor.updatedAt().toString(),cursor.updatedAt().toString(),cursor.instanceId().toString(),limit);
+        return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where status in ('RUNNING','WAITING','FAILED') and (updated_at>? or (updated_at=? and id>?)) order by updated_at,id limit ?",cursor.updatedAt(),cursor.updatedAt(),cursor.instanceId().toString(),limit);
     }
 
     @Override public Optional<WorkflowSnapshot> findByBusinessKey(String workflowKey, String businessKey) {
         if (workflowKey == null || workflowKey.isBlank() || businessKey == null || businessKey.isBlank()) return Optional.empty();
-        String sql = TEXT_SELECT_PREFIX + COLUMNS + " from workflow_instance where workflow_key = ? and business_key = ? order by created_at desc limit 1";
+        String sql = TEXT_SELECT_PREFIX + COLUMNS + " from workflow_instance where workflow_key = ? and business_key = ? order by created_at desc,id desc limit 1";
         try (Connection connection = connectionFactory.open();
             PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, workflowKey);
@@ -163,7 +163,7 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
         Objects.requireNonNull(updatedBefore,"updatedBefore");
             if(limit<1)throw new IllegalArgumentException(TEXT_LIMIT_MUST_BE_POSITIVE);
         String sql=TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where status in ('RUNNING','WAITING') and updated_at<=? order by updated_at,id limit ?";
-        return queryMany(sql,updatedBefore.toString(),limit);
+        return queryMany(sql,updatedBefore,limit);
     }
 
     private Optional<WorkflowSnapshot> findOne(String sql, String parameter) {
@@ -182,6 +182,7 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
         i<parameters.length;
         i++){Object value=parameters[i];
         if(value instanceof Integer n)s.setInt(i+1,n);
+        else if(value instanceof Instant instant)connectionFactory.strategy().bindInstant(s,i+1,instant);
         else s.setString(i+1,String.valueOf(value));
     }
     try(ResultSet rows=s.executeQuery()){ArrayList<WorkflowSnapshot> result=new ArrayList<>();
@@ -203,7 +204,7 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
                 row.getString("workflow_version"), required(row.getString("workflow_revision"), "workflow_revision"),
                 row.getString("business_key"), row.getString("correlation_id"), row.getString("current_state"),
                 WorkflowStatus.valueOf(row.getString("status")), jsonCodec.readPersistedMap(row.getString("variables")),
-                row.getLong("lock_version"), Instant.parse(row.getString("created_at")), Instant.parse(row.getString("updated_at")));
+                row.getLong("lock_version"), connectionFactory.strategy().readInstant(row, "created_at"), connectionFactory.strategy().readInstant(row, "updated_at"));
     }
 
     private Long observedVersion(Connection connection, WorkflowInstanceId id) throws SQLException {

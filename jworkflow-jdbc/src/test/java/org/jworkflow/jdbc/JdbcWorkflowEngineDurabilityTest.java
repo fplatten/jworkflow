@@ -19,23 +19,24 @@ public final class JdbcWorkflowEngineDurabilityTest {
         failedAdvanceRollsBackSnapshotAndEventTogether();
         forkJoinStateIsIsolatedAcrossInstancesAndRestart();
         productionJdbcPathHasNoInMemoryDelegate();
+        restartPinsOriginalRevisionBesideNewDefinition();
     }
 
     private static void restartContinuesFromRepositoryAndKeepsIdempotency() throws Exception {
-        Path db=Files.createTempFile("jworkflow-runtime-",".sqlite");String url="jdbc:sqlite:"+db.toAbsolutePath();
+        Path db=Files.createTempFile("jworkflow-runtime-",".sqlite");String url=ContractBackend.url(db.toAbsolutePath());
         WorkflowDefinition definition=WorkflowDefinition.of("durable","1","created",
                 WorkflowNode.step("created","order.create",List.of(WorkflowTransition.goTo("completed"))),WorkflowNode.end("completed"));
         WorkflowCommandMetadata startMetadata=metadata("start-1",null);
-        JdbcWorkflowEngine first=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl(url).initialize(true).timerPolling(false).definition(definition).build();
+        JdbcWorkflowEngine first=(JdbcWorkflowEngine)ContractBackend.engine(url).initialize(true).timerPolling(false).definition(definition).build();
         StartWorkflowCommand start=new StartWorkflowCommand("durable","1","order-1",Map.of("nested",Map.of("items",java.util.Arrays.asList(1,true,null))),startMetadata);
         StartWorkflowResult initial=first.start(start);first.close();
 
-        JdbcWorkflowEngine second=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl(url).initialize(true).timerPolling(false).build();
+        JdbcWorkflowEngine second=(JdbcWorkflowEngine)ContractBackend.engine(url).initialize(true).timerPolling(false).build();
         StartWorkflowResult repeated=second.start(start);
         check(repeated.idempotentRepeat()&&repeated.workflowInstanceId().equals(initial.workflowInstanceId()),"idempotency must survive engine reconstruction");
         WorkflowSignal signal=new WorkflowSignal("order.created","corr-1",null,"order-1",Instant.now(),Map.of());
         second.signal(new SignalWorkflowCommand(initial.workflowInstanceId(),signal,metadata("signal-1",initial.workflowInstanceId())));second.close();
-        JdbcWorkflowEngine third=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl(url).initialize(true).timerPolling(false).build();
+        JdbcWorkflowEngine third=(JdbcWorkflowEngine)ContractBackend.engine(url).initialize(true).timerPolling(false).build();
         check(third.snapshot(initial.workflowInstanceId()).status()==WorkflowStatus.COMPLETED,"a separate engine must continue persisted state");
         check(((Map<?,?>)third.snapshot(initial.workflowInstanceId()).variables().get("nested")).containsKey("items"),"nested variables must survive restart");
     }
@@ -43,7 +44,7 @@ public final class JdbcWorkflowEngineDurabilityTest {
     private static void rollbackDoesNotPublishOrLeavePartialState() throws Exception {
         Path db=Files.createTempFile("jworkflow-rollback-",".sqlite");AtomicInteger observed=new AtomicInteger();
         WorkflowDefinition definition=WorkflowDefinition.of("rollback","1","done",WorkflowNode.end("done"));
-        JdbcWorkflowEngine engine=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl("jdbc:sqlite:"+db.toAbsolutePath()).initialize(true).timerPolling(false)
+        JdbcWorkflowEngine engine=(JdbcWorkflowEngine)ContractBackend.engine(ContractBackend.url(db.toAbsolutePath())).initialize(true).timerPolling(false)
                 .definition(definition).eventPublisher(event->observed.incrementAndGet()).build();
         engine.writeProbe(stage->{if("event".equals(stage))throw new IllegalStateException("injected after event write");});
         try{engine.start(new StartWorkflowCommand("rollback","1","order-r",Map.of(),metadata("rollback-start",null)));throw new AssertionError("expected injected failure");}
@@ -53,10 +54,10 @@ public final class JdbcWorkflowEngineDurabilityTest {
     }
 
     private static void failedAdvanceRollsBackSnapshotAndEventTogether() throws Exception {
-        Path db=Files.createTempFile("jworkflow-advance-rollback-",".sqlite");String url="jdbc:sqlite:"+db.toAbsolutePath();
+        Path db=Files.createTempFile("jworkflow-advance-rollback-",".sqlite");String url=ContractBackend.url(db.toAbsolutePath());
         WorkflowDefinition definition=WorkflowDefinition.of("advance-rollback","1","waiting",
                 WorkflowNode.waitFor("waiting",new WaitDefinition(new EventName("order.approved"),"businessKey","done"),null),WorkflowNode.end("done"));
-        try(JdbcWorkflowEngine engine=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl(url).initialize(true).timerPolling(false).definition(definition).build()){
+        try(JdbcWorkflowEngine engine=(JdbcWorkflowEngine)ContractBackend.engine(url).initialize(true).timerPolling(false).definition(definition).build()){
             WorkflowInstanceId id=engine.start(new StartWorkflowCommand("advance-rollback","1","order-a",Map.of(),metadataFor("advance-start","advance-rollback","order-a",null))).workflowInstanceId();
             long beforeVersion=engine.snapshot(id).lockVersion();int beforeEvents=count(url,"workflow_event");
             engine.writeProbe(stage->{if("event".equals(stage))throw new IllegalStateException("advance failure after event append");});
@@ -69,17 +70,17 @@ public final class JdbcWorkflowEngineDurabilityTest {
     }
 
     private static void forkJoinStateIsIsolatedAcrossInstancesAndRestart() throws Exception {
-        Path db=Files.createTempFile("jworkflow-fork-",".sqlite");String url="jdbc:sqlite:"+db.toAbsolutePath();java.util.ArrayList<WorkflowEvent> observed=new java.util.ArrayList<>();
+        Path db=Files.createTempFile("jworkflow-fork-",".sqlite");String url=ContractBackend.url(db.toAbsolutePath());java.util.ArrayList<WorkflowEvent> observed=new java.util.ArrayList<>();
         WorkflowDefinition definition=WorkflowDefinition.of("fork-durable","1","fork",
                 WorkflowNode.fork("fork",new ForkDefinition(Map.of("left","left","right","right"),"joined")),
                 WorkflowNode.step("left","left.run",List.of(WorkflowTransition.goTo("joined"))),
                 WorkflowNode.step("right","right.run",List.of(WorkflowTransition.goTo("joined"))),
                 WorkflowNode.join("joined",new JoinDefinition(List.of("left","right"),"done",new org.jworkflow.events.EventName("work.joined"))),WorkflowNode.end("done"));
-        JdbcWorkflowEngine first=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl(url).initialize(true).timerPolling(false).definition(definition).eventPublisher(observed::add).build();
+        JdbcWorkflowEngine first=(JdbcWorkflowEngine)ContractBackend.engine(url).initialize(true).timerPolling(false).definition(definition).eventPublisher(observed::add).build();
         WorkflowInstanceId one=first.start(new StartWorkflowCommand("fork-durable","1","one",Map.of(),metadataFor("fork-one","fork-durable","one",null))).workflowInstanceId();
         WorkflowInstanceId two=first.start(new StartWorkflowCommand("fork-durable","1","two",Map.of(),metadataFor("fork-two","fork-durable","two",null))).workflowInstanceId();
         String executionOne=execution(observed,one),executionTwo=execution(observed,two);check(!executionOne.equals(executionTwo),"fork executions must be isolated");first.close();
-        JdbcWorkflowEngine restarted=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).jdbcUrl(url).initialize(true).timerPolling(false).build();
+        JdbcWorkflowEngine restarted=(JdbcWorkflowEngine)ContractBackend.engine(url).initialize(true).timerPolling(false).build();
         completeBranch(restarted,one,"one","left",executionOne,"one-left");completeBranch(restarted,two,"two","right",executionTwo,"two-right");
         check(restarted.snapshot(one).status()!=WorkflowStatus.COMPLETED&&restarted.snapshot(two).status()!=WorkflowStatus.COMPLETED,"one branch must not complete either join");
         completeBranch(restarted,one,"one","right",executionOne,"one-right");check(restarted.snapshot(one).status()==WorkflowStatus.COMPLETED,"first join must complete independently");
@@ -90,7 +91,36 @@ public final class JdbcWorkflowEngineDurabilityTest {
         engine.signal(new SignalWorkflowCommand(id,new WorkflowSignal("branch.completed","corr-"+business,null,business,Instant.now(),Map.of("branch",branch,"forkExecutionId",execution)),metadataFor(key,"fork-durable",business,id)));
     }
     private static String execution(List<WorkflowEvent> events,WorkflowInstanceId id){return events.stream().filter(e->"branch.started".equals(e.eventName().value())&&id.equals(e.metadata().workflowInstanceId())).findFirst().orElseThrow().metadata().headers().get("forkExecutionId");}
-    private static int count(String url,String table)throws Exception{try(var connection=java.sql.DriverManager.getConnection(url);var statement=connection.createStatement();var rows=statement.executeQuery("select count(*) from "+table)){return rows.next()?rows.getInt(1):0;}}
+    private static int count(String url,String table)throws Exception{try(var connection=ContractBackend.open(url);var statement=connection.createStatement();var rows=statement.executeQuery("select count(*) from "+table)){return rows.next()?rows.getInt(1):0;}}
+
+    private static void restartPinsOriginalRevisionBesideNewDefinition() throws Exception {
+        String url=ContractBackend.url(Files.createTempFile("revision-restart-",".sqlite"));
+        WorkflowDefinition old=WorkflowDefinition.of("revision","1","waiting",
+                WorkflowNode.waitFor("waiting",new WaitDefinition(new EventName("order.approved"),"businessKey","old-end"),
+                        new TimeoutDefinition(java.time.Duration.ofSeconds(1),"old-end",new EventName("order.expired"))),WorkflowNode.end("old-end"));
+        WorkflowDefinition newer=WorkflowDefinition.of("revision","1","waiting",
+                WorkflowNode.waitFor("waiting",new WaitDefinition(new EventName("order.approved"),"businessKey","new-end"),
+                        new TimeoutDefinition(java.time.Duration.ofSeconds(1),"new-end",new EventName("order.expired"))),WorkflowNode.end("new-end"));
+        WorkflowInstanceId id,routedId,timedId;String revision;
+        try(var first=(JdbcWorkflowEngine)ContractBackend.engine(url).initialize(true).timerPolling(false).definition(old).build()){
+            id=first.start("revision","old-order",Map.of());revision=first.snapshot(id).workflowRevision();
+            routedId=first.start("revision","routed-order",Map.of());timedId=first.start("revision","timed-order",Map.of());
+        }
+        try(var second=(JdbcWorkflowEngine)ContractBackend.engine(url).initialize(true).timerPolling(false).definition(newer)
+                .clock(java.time.Clock.fixed(Instant.now().plusSeconds(5),java.time.ZoneOffset.UTC)).build()){
+            var newId=second.start("revision","new-order",Map.of());
+            check(!revision.equals(second.snapshot(newId).workflowRevision()),"new definition must have a different revision");
+            second.signal(new SignalWorkflowCommand(id,new WorkflowSignal("order.approved","old-order",null,"old-order",Instant.now(),Map.of()),metadataFor("revision-signal","revision","old-order",id)));
+            Instant now=Instant.now();
+            var event=new WorkflowEvent(new org.jworkflow.events.EventMetadata(null,new EventName("order.approved"),"test","routed-order",null,null,routedId,"routed-order",null,"1",now,now,Map.of()),org.jworkflow.events.EventMessage.empty());
+            second.route(event,org.jworkflow.routing.WorkflowEventRoute.exact(routedId,event.eventName()));
+            check(second.pollTimersOnce()==1,"only the old timed workflow should fire");
+            for(var oldId:List.of(id,routedId,timedId)){
+                check("old-end".equals(second.snapshot(oldId).state())&&revision.equals(second.snapshot(oldId).workflowRevision()),"signal, route and timer must use the exact old revision");
+            }
+            check("waiting".equals(second.snapshot(newId).state()),"old timers must not affect the new revision instance");
+        }
+    }
 
     private static void productionJdbcPathHasNoInMemoryDelegate(){
         for(var field:JdbcWorkflowEngine.class.getDeclaredFields())check(!field.getType().equals(InMemoryWorkflowEngine.class),"JDBC engine must not retain an in-memory engine");

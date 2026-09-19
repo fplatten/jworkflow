@@ -12,7 +12,8 @@ import java.util.concurrent.Executor;
 public interface WorkflowEngine extends EventPublisher, org.jworkflow.routing.WorkflowEventRouter, AutoCloseable {
     enum Type {
         IN_MEMORY,
-        SQLITE
+        SQLITE,
+        POSTGRESQL
     }
 
     static WorkflowEngineBuilder builder() {

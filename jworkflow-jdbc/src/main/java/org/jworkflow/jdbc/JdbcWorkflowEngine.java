@@ -30,7 +30,6 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     private static final String TEXT_EVENT = "event";
     private static final String TEXT_STATUS = "status";
     private static final String TEXT_COMMAND_ID = "commandId";
-    private static final String SQLITE_DRIVER_CLASS = "org.sqlite.JDBC";
     private final Type type;
         private final JdbcConnectionFactory connections;
         private final JdbcWorkflowPersistence persistence;
@@ -49,6 +48,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         private final String workerId=UUID.randomUUID().toString();
     private final OutboxEnqueueService outboxEnqueue;
     private final AtomicBoolean closed=new AtomicBoolean();
+    private final AtomicBoolean timerReconciliationRequired=new AtomicBoolean();
         private ScheduledExecutorService timerPoller;
     private int startupValidationQueryCount;
         private int startupValidationPeakBatchSize;
@@ -103,12 +103,12 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         if (type == Type.IN_MEMORY) {
             throw new IllegalArgumentException("In-memory workflows do not use JDBC");
         }
-        if(source==null&&driver==null) {
-            Class.forName(SQLITE_DRIVER_CLASS);
-        }
         Map<String,String> s=settings==null?Map.of():settings;
-        JdbcConnectionFactory c=new JdbcConnectionFactory(url,user,password,driver,source,Integer.parseInt(s.getOrDefault("sqlite.busy-timeout-ms","5000")),Boolean.parseBoolean(s.getOrDefault("sqlite.wal-enabled","false")));
+        Objects.requireNonNull(type,"type");
         if(source==null&&(url==null||url.isBlank()))throw new IllegalArgumentException("jdbcUrl or dataSource is required for "+type);
+        if(source==null&&driver==null) JdbcDatabaseStrategy.loadDriver(type);
+        JdbcConnectionFactory c=new JdbcConnectionFactory(type,url,user,password,driver,source,s);
+        c.strategy();
         if(init) {
             JdbcSchemaInitializer.initialize(c);
         }
@@ -122,7 +122,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         return create(type,url,user,password,driver,source,init,definitions,publisher,handlers,conditions,starts,settings,listeners,NoOpWorkflowLifecycleObserver.INSTANCE,Clock.systemUTC());
     }
     @Override public StartWorkflowResult start(StartWorkflowCommand command){
-        Committed<StartWorkflowResult> c=persistence.jdbcTransactions().inImmediateTransaction(()->{String h=hash(TEXT_START,command.workflowKey(),command.workflowVersion(),command.businessKey(),new JdbcJsonCodec().write(command.variables()));
+        Committed<StartWorkflowResult> c=persistence.jdbcTransactions().inWriteTransaction(()->{String h=hash(TEXT_START,command.workflowKey(),command.workflowVersion(),command.businessKey(),new JdbcJsonCodec().write(command.variables()));
             Optional<CommandResultRecord> prior=prior(command.metadata().idempotencyKey(),TEXT_START,h);
                 if(prior.isPresent())return new Committed<>(repeatStart(prior.get()),List.of());
             WorkflowTransitionResult<StartWorkflowResult> r=machine.start(command);
@@ -133,16 +133,16 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         notifyObservers(c.events);
             return c.result;
     }
-    @Override public WorkflowCommandResult signal(SignalWorkflowCommand c){return mutate(TEXT_SIGNAL,c.instanceId(),c.metadata(),c.signal().toString(),(s,t)->machine.signal(s,t,c));
+    @Override public WorkflowCommandResult signal(SignalWorkflowCommand c){return mutate(TEXT_SIGNAL,c.instanceId(),c.metadata(),signalBody(c.signal()),(s,t)->machineFor(s).signal(s,t,c));
     }
-    @Override public WorkflowCommandResult retryFailedStep(RetryFailedStepCommand c){return mutate("retryFailedStep",c.instanceId(),c.metadata(),c.stepId(),(s,t)->machine.retry(s,t,c));
+    @Override public WorkflowCommandResult retryFailedStep(RetryFailedStepCommand c){return mutate("retryFailedStep",c.instanceId(),c.metadata(),c.stepId(),(s,t)->machineFor(s).retry(s,t,c));
     }
-    @Override public WorkflowCommandResult cancel(CancelWorkflowCommand c){return mutate("cancel",c.instanceId(),c.metadata(),"cancel",(s,t)->machine.cancel(s,t,c));
+    @Override public WorkflowCommandResult cancel(CancelWorkflowCommand c){return mutate("cancel",c.instanceId(),c.metadata(),"cancel",(s,t)->machineFor(s).cancel(s,t,c));
     }
-    @Override public WorkflowCommandResult resume(ResumeWorkflowCommand c){return mutate("resume",c.instanceId(),c.metadata(),"resume",(s,t)->machine.resume(s,t,c));
+    @Override public WorkflowCommandResult resume(ResumeWorkflowCommand c){return mutate("resume",c.instanceId(),c.metadata(),"resume",(s,t)->machineFor(s).resume(s,t,c));
     }
     private WorkflowCommandResult mutate(String type,WorkflowInstanceId id,WorkflowCommandMetadata metadata,String body,Transition transition){
-        Committed<WorkflowCommandResult> c=persistence.jdbcTransactions().inImmediateTransaction(()->{String h=hash(type,id.toString(),body);
+        Committed<WorkflowCommandResult> c=persistence.jdbcTransactions().inWriteTransaction(()->{String h=hash(type,id.toString(),body);
             Optional<CommandResultRecord> prior=prior(metadata.idempotencyKey(),type,h);
             if(prior.isPresent()) {
                 return new Committed<>(repeat(prior.get()),List.of());
@@ -168,14 +168,22 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             outboxEnqueue.enqueue(e);
             writeProbe.get().accept("outbox");
         }
-    for(WorkflowTimer t:m.timersAfter()){persistence.timers().save(t);
+    for(WorkflowTimer t:m.timersAfter()){
+            if(t.status()==WorkflowTimerStatus.CLAIMED&&(m.nextSnapshot().status()==WorkflowStatus.CANCELED||m.nextSnapshot().status()==WorkflowStatus.COMPLETED))
+                persistence.timers().cancel(t.timerId(),clock.instant());
+            else persistence.timers().save(t);
             writeProbe.get().accept("timer");
         }
     return List.copyOf(captured);
         }
     private Optional<CommandResultRecord> prior(String key,String type,String hash){if(key==null||key.isBlank())return Optional.empty();
+        try {
+            connections.strategy().lockCommand(connections.currentTransactionConnection(), key);
+        } catch(java.sql.SQLException failure) {
+            throw new JdbcTransactionException("command lock", failure);
+        }
         Optional<CommandResultRecord> r=persistence.commandResults().find(key);
-        r.ifPresent(v->{if(!v.commandType().equals(type)||!v.requestHash().equals(hash))throw new WorkflowIdempotencyConflictException(key);
+        r.ifPresent(v->{if(!v.idempotencyKey().equals(key)||!v.commandType().equals(type)||!v.requestHash().equals(hash))throw new WorkflowIdempotencyConflictException(key);
     });
         return r;
     }
@@ -191,18 +199,38 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             id=r.workflowInstanceId();
             d.put(TEXT_COMMAND_ID,r.commandId().toString());
             d.put(TEXT_STATUS,r.status().name());
-        }persistence.commandResults().save(new CommandResultRecord(key,type,hash,id,d,Instant.now()));
+        }
+        if(type()==Type.POSTGRESQL) {
+            WorkflowSnapshot snapshot=result instanceof StartWorkflowResult r?r.snapshot():((WorkflowCommandResult)result).snapshot();
+            d.put("snapshot", JdbcCommandSnapshot.encode(snapshot));
+            d.put("emittedEventIds",result instanceof StartWorkflowResult r?r.emittedEventIds():((WorkflowCommandResult)result).emittedEventIds());
+            if(result instanceof WorkflowCommandResult r)d.put("eventStatusAttemptIds",r.eventStatusAttemptIds());
+        }
+        CommandResultRecord stored=persistence.commandResults().save(new CommandResultRecord(key,type,hash,id,d,Instant.now()));
+        if(!Objects.equals(stored.workflowInstanceId(),id)||!new JdbcJsonCodec().write(stored.result()).equals(new JdbcJsonCodec().write(d)))
+            throw new org.jworkflow.persistence.PersistenceConstraintException("Command result changed outside command key protection; transaction must roll back");
             writeProbe.get().accept("commandResult");
         }
-    private StartWorkflowResult repeatStart(CommandResultRecord r){WorkflowSnapshot s=require(r.workflowInstanceId());
-        return new StartWorkflowResult(UUID.fromString((String)r.result().get(TEXT_COMMAND_ID)),s.instanceId(),s.workflowKey(),s.workflowVersion(),s.businessKey(),s.correlationId(),Instant.parse((String)r.result().get("acceptedAt")),s,List.of(),true);
+    private WorkflowSnapshot resultSnapshot(CommandResultRecord r){
+        return r.result().get("snapshot") instanceof Map<?,?> snapshot?JdbcCommandSnapshot.decode(snapshot):require(r.workflowInstanceId());
     }
-    private WorkflowCommandResult repeat(CommandResultRecord r){WorkflowSnapshot s=require(r.workflowInstanceId());
-        return new WorkflowCommandResult(UUID.fromString((String)r.result().get(TEXT_COMMAND_ID)),s.instanceId(),WorkflowCommandStatus.valueOf((String)r.result().get(TEXT_STATUS)),s,List.of(),List.of(),true);
+    private static List<String> resultIds(CommandResultRecord r,String key){
+        return r.result().get(key) instanceof List<?> values?values.stream().map(String.class::cast).toList():List.of();
+    }
+    private StartWorkflowResult repeatStart(CommandResultRecord r){WorkflowSnapshot s=resultSnapshot(r);
+        return new StartWorkflowResult(UUID.fromString((String)r.result().get(TEXT_COMMAND_ID)),s.instanceId(),s.workflowKey(),s.workflowVersion(),s.businessKey(),s.correlationId(),Instant.parse((String)r.result().get("acceptedAt")),s,resultIds(r,"emittedEventIds"),true);
+    }
+    private WorkflowCommandResult repeat(CommandResultRecord r){WorkflowSnapshot s=resultSnapshot(r);
+        return new WorkflowCommandResult(UUID.fromString((String)r.result().get(TEXT_COMMAND_ID)),s.instanceId(),WorkflowCommandStatus.valueOf((String)r.result().get(TEXT_STATUS)),s,resultIds(r,"emittedEventIds"),resultIds(r,"eventStatusAttemptIds"),true);
     }
     private WorkflowSnapshot require(WorkflowInstanceId id){return persistence.instances().findById(id).orElseThrow(()->new WorkflowInstanceNotFoundException(id));
     }
     private void requireDefinition(WorkflowSnapshot s){if(persistence.definitions().findRevision(s.workflowKey(),s.workflowVersion(),s.workflowRevision()).isEmpty())throw new WorkflowDefinitionNotFoundException(s.workflowKey(),s.workflowVersion());
+    }
+    private WorkflowStateMachine machineFor(WorkflowSnapshot snapshot){
+        return machine.withDefinitionRevision(persistence.definitions()
+                .findRevision(snapshot.workflowKey(),snapshot.workflowVersion(),snapshot.workflowRevision())
+                .orElseThrow(()->new WorkflowDefinitionNotFoundException(snapshot.workflowKey(),snapshot.workflowVersion())));
     }
     @Override public WorkflowSnapshot snapshot(WorkflowInstanceId id){return require(id);
     }@Override public WorkflowSnapshot snapshot(String key,String business){return persistence.instances().findByBusinessKey(key,business).orElseThrow(()->new WorkflowInstanceNotFoundException("No workflow instance for "+key+" and "+business));
@@ -233,9 +261,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         if(candidates.isEmpty()){observeIncoming(WorkflowLifecycleEventType.EVENT_IGNORED,event,null);
         return new WorkflowRoutingResult(WorkflowRoutingOutcome.NO_MATCH,List.of(),List.of(),"No active workflow matches the route");
     }WorkflowEvent safeEvent=event;
-        List<WorkflowSnapshot> eligible=candidates.stream().filter(snapshot->{requireDefinition(snapshot);
-        return machine.accepts(snapshot,safeEvent);
-    }).toList();
+        List<WorkflowSnapshot> eligible=candidates.stream().filter(snapshot->routeEligible(safeEvent,snapshot)).toList();
         if(eligible.isEmpty()){WorkflowRoutingOutcome outcome=candidates.stream().allMatch(s->s.status()==WorkflowStatus.COMPLETED||s.status()==WorkflowStatus.CANCELED)?WorkflowRoutingOutcome.TERMINAL_WORKFLOW:WorkflowRoutingOutcome.EVENT_NOT_ACCEPTED;
         observeIncoming(WorkflowLifecycleEventType.EVENT_IGNORED,event,candidates.get(0));
         return new WorkflowRoutingResult(outcome,List.of(),List.of(),"Matching workflow does not accept "+event.eventName());
@@ -259,24 +285,35 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     }
     @SuppressWarnings("java:S3776") // One transaction contains all idempotency and optimistic-routing guards.
     private RouteAttempt routeOne(WorkflowEvent event,WorkflowSnapshot candidate){
-        Committed<RouteAttempt> committed=persistence.jdbcTransactions().inImmediateTransaction(()->{
-            WorkflowSnapshot current=require(candidate.instanceId());
-                requireDefinition(current);
-                SignalWorkflowCommand command=routedSignal(event,current);
-            String body=command.signal().toString();
-                String requestHash=hash(TEXT_SIGNAL,current.instanceId().toString(),body);
+        Committed<RouteAttempt> committed=persistence.jdbcTransactions().inWriteTransaction(()->{
+                SignalWorkflowCommand command=routedSignal(event,candidate);
+            String body=signalBody(command.signal());
+                String requestHash=hash(TEXT_SIGNAL,candidate.instanceId().toString(),body);
                 Optional<CommandResultRecord> existing=prior(command.metadata().idempotencyKey(),TEXT_SIGNAL,requestHash);
             if(existing.isPresent())return new Committed<>(new RouteAttempt(WorkflowRoutingOutcome.ROUTED,"Routed idempotent repeat"),List.of());
-            if(!machine.accepts(current,event)){WorkflowRoutingOutcome outcome=current.status()==WorkflowStatus.COMPLETED||current.status()==WorkflowStatus.CANCELED?WorkflowRoutingOutcome.TERMINAL_WORKFLOW:WorkflowRoutingOutcome.EVENT_NOT_ACCEPTED;
+            WorkflowSnapshot current=require(candidate.instanceId());
+                requireDefinition(current);
+            if(!machineFor(current).accepts(current,event)){WorkflowRoutingOutcome outcome=current.status()==WorkflowStatus.COMPLETED||current.status()==WorkflowStatus.CANCELED?WorkflowRoutingOutcome.TERMINAL_WORKFLOW:WorkflowRoutingOutcome.EVENT_NOT_ACCEPTED;
                 return new Committed<>(new RouteAttempt(outcome,"Matching workflow no longer accepts "+event.eventName()),List.of());
             }
-            WorkflowTransitionResult<WorkflowCommandResult> result=machine.signal(current,persistence.timers().findByWorkflowInstance(current.instanceId()),command);
+            WorkflowTransitionResult<WorkflowCommandResult> result=machineFor(current).signal(current,persistence.timers().findByWorkflowInstance(current.instanceId()),command);
                 List<WorkflowEvent> captured=persist(result.mutation(),false);
                 save(command.metadata().idempotencyKey(),TEXT_SIGNAL,requestHash,result.commandResult());
                 return new Committed<>(new RouteAttempt(WorkflowRoutingOutcome.ROUTED,"Routed"),captured);
         });
             notifyObservers(committed.events);
             return committed.result;
+    }
+    private boolean routeEligible(WorkflowEvent event,WorkflowSnapshot candidate){
+        if(type!=Type.POSTGRESQL){requireDefinition(candidate);return machineFor(candidate).accepts(candidate,event);}
+        return persistence.jdbcTransactions().inWriteTransaction(()->{
+            SignalWorkflowCommand command=routedSignal(event,candidate);
+            String requestHash=hash(TEXT_SIGNAL,candidate.instanceId().toString(),signalBody(command.signal()));
+            if(prior(command.metadata().idempotencyKey(),TEXT_SIGNAL,requestHash).isPresent())return true;
+            WorkflowSnapshot current=require(candidate.instanceId());
+            requireDefinition(current);
+            return machineFor(current).accepts(current,event);
+        });
     }
     private List<WorkflowSnapshot> resolveCandidates(WorkflowEventRoute route){if(route.workflowInstanceId()!=null){return resolveExactCandidate(route);
     }int limit=recovery.maximumRoutingCandidates+1;
@@ -332,12 +369,13 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         try{pollTimersOnce();
     }catch(RuntimeException ignored){/* a later bounded poll retries durable work */}}
     int pollTimersOnce(){
+        if(timerReconciliationRequired.get())throw new WorkflowInfrastructureException("Timer polling paused: reconcile the failed transaction before recreating this engine",null);
         Instant now=clock.instant();
             persistence.transactions().execute(()->{persistence.timers().releaseExpiredClaims(now);
             persistence.inbox().releaseExpiredClaims(now);
             persistence.outbox().releaseExpiredClaims(now);
         });
-        List<WorkflowTimer> claimed=persistence.jdbcTransactions().inImmediateTransaction(()->persistence.timers().claimDue(now,workerId,now.plus(recovery.lease),recovery.batchSize));
+        List<WorkflowTimer> claimed=persistence.jdbcTransactions().inWriteTransaction(()->persistence.timers().claimDueFenced(now,workerId,now.plus(recovery.lease),recovery.batchSize));
         for(WorkflowTimer timer:claimed) {
             processClaimedTimer(timer);
         }
@@ -345,9 +383,11 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     }
     private void processClaimedTimer(WorkflowTimer claimed){
         try{
-            Committed<WorkflowTimer> committed=persistence.jdbcTransactions().inImmediateTransaction(()->{WorkflowSnapshot current=require(claimed.workflowInstanceId());
+            Committed<WorkflowTimer> committed=persistence.jdbcTransactions().inWriteTransaction(()->{
+                persistence.timers().requireClaim(claimed.timerId(),workerId,claimed.claimToken());
+                WorkflowSnapshot current=require(claimed.workflowInstanceId());
                 requireDefinition(current);
-                WorkflowTransitionResult<WorkflowTimer> result=machine.fireTimer(current,persistence.timers().findByWorkflowInstance(current.instanceId()),claimed,clock.instant());
+                WorkflowTransitionResult<WorkflowTimer> result=machineFor(current).fireTimer(current,persistence.timers().findByWorkflowInstance(current.instanceId()),claimed,clock.instant());
                 WorkflowMutation mutation=result.mutation();
                     persistence.instances().update(mutation.nextSnapshot(),current.lockVersion());
                     writeProbe.get().accept("snapshot");
@@ -361,17 +401,23 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
                 }
                 for(WorkflowTimer timer:mutation.timersAfter())if(!timer.timerId().equals(claimed.timerId()))persistence.timers().save(timer);
                 persistence.timers().appendAttempt(new WorkflowTimerAttempt(null,claimed.timerId(),claimed.attemptCount()+1,WorkflowTimerStatus.FIRED,workerId,null,clock.instant()));
-                persistence.timers().markFired(claimed.timerId(),workerId,clock.instant());
+                persistence.timers().markFired(claimed.timerId(),workerId,claimed.claimToken(),clock.instant());
                     writeProbe.get().accept("timer");
                     return new Committed<>(result.commandResult(),List.copyOf(captured));
                 });
             notifyObservers(committed.events);
         }catch(RuntimeException failure){
-            try{persistence.transactions().execute(()->{persistence.timers().appendAttempt(new WorkflowTimerAttempt(null,claimed.timerId(),claimed.attemptCount()+1,WorkflowTimerStatus.RETRY_SCHEDULED,workerId,safeMessage(failure),clock.instant()));
-                persistence.timers().markFailed(claimed.timerId(),workerId,safeMessage(failure),clock.instant().plus(recovery.retryDelay));
+            boolean reconcile=JdbcTransactionException.requiresReconciliation(failure);
+            try{persistence.transactions().execute(()->{
+                persistence.timers().requireClaim(claimed.timerId(),workerId,claimed.claimToken());
+                persistence.timers().appendAttempt(new WorkflowTimerAttempt(null,claimed.timerId(),claimed.attemptCount()+1,reconcile?WorkflowTimerStatus.DEAD_LETTER:WorkflowTimerStatus.RETRY_SCHEDULED,workerId,safeMessage(failure),clock.instant()));
+                if(reconcile)persistence.timers().markDeadLetter(claimed.timerId(),workerId,claimed.claimToken(),safeMessage(failure),clock.instant());
+                else persistence.timers().markFailed(claimed.timerId(),workerId,claimed.claimToken(),safeMessage(failure),clock.instant().plus(recovery.retryDelay));
             });
             }
-            catch(RuntimeException ignored){failure.addSuppressed(ignored);
+            catch(RuntimeException ignored){
+                if(reconcile)timerReconciliationRequired.set(true);
+                failure.addSuppressed(ignored);
             }
     throw failure;
         }
@@ -403,9 +449,9 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     }
     WorkflowEvent capture(WorkflowEvent event){return SafeEventCapturePolicy.filter(eventCapturePolicy,event);
     }
-    private void notifyObservers(List<WorkflowEvent> events){events.forEach(event->{observer.publish(event);
-        lifecycleEvents.publish(event);
-        observeOutboxCreated(event);
+    private void notifyObservers(List<WorkflowEvent> events){events.forEach(event->{persistence.transactions().afterCommit(()->observer.publish(event));
+        persistence.transactions().afterCommit(()->lifecycleEvents.publish(event));
+        persistence.transactions().afterCommit(()->observeOutboxCreated(event));
     });
     }
     private void observeOutboxCreated(WorkflowEvent event){String configured=settings.get("outbox.destination."+event.eventName().value());
@@ -414,9 +460,23 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         if(!value.isBlank())lifecycleObserver.observe(new WorkflowLifecycleEvent(WorkflowLifecycleEventType.OUTBOX_CREATED,event.metadata().occurredAt(),event.metadata().workflowInstanceId(),event.metadata().headers().get("workflowKey"),event.metadata().headers().get("workflowVersion"),event.metadata().headers().get("state"),event.metadata().headers().get("step"),event.metadata().correlationId(),event.metadata().causationId(),event.metadata().traceId(),Map.of("destination",value)));
     }}
     private void observeIncoming(WorkflowLifecycleEventType type,WorkflowEvent event,WorkflowSnapshot snapshot){EventMetadata m=event.metadata();
-        lifecycleObserver.observe(new WorkflowLifecycleEvent(type,m.occurredAt(),snapshot==null?m.workflowInstanceId():snapshot.instanceId(),snapshot==null?null:snapshot.workflowKey(),snapshot==null?null:snapshot.workflowVersion(),snapshot==null?null:snapshot.state(),null,m.correlationId(),m.causationId(),m.traceId(),Map.of("eventName",event.eventName().value())));
+        persistence.transactions().afterCommit(()->lifecycleObserver.observe(new WorkflowLifecycleEvent(type,m.occurredAt(),snapshot==null?m.workflowInstanceId():snapshot.instanceId(),snapshot==null?null:snapshot.workflowKey(),snapshot==null?null:snapshot.workflowVersion(),snapshot==null?null:snapshot.state(),null,m.correlationId(),m.causationId(),m.traceId(),Map.of("eventName",event.eventName().value()))));
     }
-    private static String hash(String...p){try{MessageDigest d=MessageDigest.getInstance("SHA-256");
+    private String signalBody(WorkflowSignal signal){
+        if(type!=Type.POSTGRESQL)return signal.toString();
+        Map<String,Object> value=new LinkedHashMap<>();
+        value.put("eventType",signal.eventType());value.put("correlationId",signal.correlationId());
+        value.put("causationId",signal.causationId());value.put("businessKey",signal.businessKey());
+        value.put("occurredAt",signal.occurredAt().toString());value.put("metadata",signal.metadata());
+        EventMessage message=signal.message();
+        boolean binary=message.payload() instanceof byte[];
+        value.put("binary",binary);value.put("payload",binary?Base64.getEncoder().encodeToString((byte[])message.payload()):message.payload());
+        value.put("contentType",message.contentType());value.put("schemaName",message.schemaName());
+        value.put("schemaVersion",message.schemaVersion());value.put("redacted",message.redacted());value.put("attributes",message.attributes());
+        return new JdbcJsonCodec().write(value);
+    }
+    private String hash(String...p){try{MessageDigest d=MessageDigest.getInstance("SHA-256");
+        if(type==Type.POSTGRESQL)return HexFormat.of().formatHex(d.digest(new JdbcJsonCodec().write(Arrays.asList(p)).getBytes(StandardCharsets.UTF_8)));
         for(String s:p){d.update((s==null?"<null>":s).getBytes(StandardCharsets.UTF_8));
         d.update((byte)0);
     }

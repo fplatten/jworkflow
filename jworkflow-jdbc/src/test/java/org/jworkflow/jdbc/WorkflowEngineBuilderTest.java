@@ -1383,7 +1383,7 @@ public final class WorkflowEngineBuilderTest {
     private static void createsJdbcEngineWithInjectedDriver() throws Exception {
         CapturingDriver driver = new CapturingDriver();
         try (WorkflowEngine engine = WorkflowEngine.builder()
-                .type(WorkflowEngine.Type.SQLITE)
+                .type(WorkflowEngine.Type.POSTGRESQL)
                 .jdbcUrl("jdbc:capture:jworkflow")
                 .driver(driver)
                 .build()) {
@@ -1399,7 +1399,7 @@ public final class WorkflowEngineBuilderTest {
     private static void jdbcEnginePersistsStartedSnapshot() throws Exception {
         CapturingDriver driver = new CapturingDriver();
         try (WorkflowEngine engine = WorkflowEngine.builder()
-                .type(WorkflowEngine.Type.SQLITE)
+                .type(WorkflowEngine.Type.POSTGRESQL)
                 .jdbcUrl("jdbc:capture:jworkflow")
                 .driver(driver)
                 .definition(WorkflowDefinition.of("jdbc-flow", "1", "completed", WorkflowNode.end("completed")))
@@ -1583,10 +1583,19 @@ public final class WorkflowEngineBuilderTest {
 
         @Override
         public Connection connect(String url, Properties info) {
+            boolean[] autoCommit = {true};
             return (Connection) Proxy.newProxyInstance(
                     Connection.class.getClassLoader(),
                     new Class<?>[]{Connection.class},
                     (proxy, method, args) -> {
+                        if ("getAutoCommit".equals(method.getName())) return autoCommit[0];
+                        if ("setAutoCommit".equals(method.getName())) { autoCommit[0]=(boolean)args[0]; return null; }
+                        if ("createStatement".equals(method.getName())) return TransactionTestDataSource.validationStatement();
+                        if ("getMetaData".equals(method.getName())) {
+                            return Proxy.newProxyInstance(java.sql.DatabaseMetaData.class.getClassLoader(),
+                                    new Class<?>[]{java.sql.DatabaseMetaData.class}, (p, m, a) ->
+                                            "getDatabaseProductName".equals(m.getName()) ? "PostgreSQL" : defaultValue(m.getReturnType()));
+                        }
                         if ("prepareStatement".equals(method.getName())) {
                             String sql = (String) args[0];
                             statements.add(sql);
@@ -1598,6 +1607,14 @@ public final class WorkflowEngineBuilderTest {
                                             return 1;
                                         }
                                         if ("executeQuery".equals(statementMethod.getName())) {
+                                            if(sql.contains("returning last_sequence")) {
+                                                boolean[] read={false};
+                                                return Proxy.newProxyInstance(java.sql.ResultSet.class.getClassLoader(),new Class<?>[]{java.sql.ResultSet.class},(p,m,a)->{
+                                                    if(m.getName().equals("next")){boolean next=!read[0];read[0]=true;return next;}
+                                                    if(m.getName().equals("getLong"))return 1L;
+                                                    return defaultValue(m.getReturnType());
+                                                });
+                                            }
                                             return resultSet();
                                         }
                                         if ("execute".equals(statementMethod.getName())) {
@@ -1696,6 +1713,10 @@ public final class WorkflowEngineBuilderTest {
                         }
                         if ("getString".equals(resultSetMethod.getName())) {
                             return workflowEventRow.get((String) resultSetArgs[0]);
+                        }
+                        if ("getBigDecimal".equals(resultSetMethod.getName())) {
+                            String value = workflowEventRow.get((String) resultSetArgs[0]);
+                            return value == null ? null : PostgresqlInstantCodec.encode(Instant.parse(value));
                         }
                         if ("close".equals(resultSetMethod.getName())) {
                             return null;

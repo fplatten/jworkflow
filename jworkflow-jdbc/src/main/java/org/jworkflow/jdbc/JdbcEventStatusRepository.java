@@ -50,7 +50,7 @@ final class JdbcEventStatusRepository implements EventStatusRepository {
             statement.setString(2, attempt.eventId().toString());
             statement.setString(3, attempt.attemptId().toString());
             statement.setInt(4, attempt.attemptNumber());
-            statement.setString(5, attempt.idempotencyKey());
+            statement.setString(5, connectionFactory.strategy().encodeIdempotencyKey(attempt.idempotencyKey()));
             statement.setString(6, attempt.workflowInstanceId() == null ? null : attempt.workflowInstanceId().toString());
             statement.setString(7, attempt.correlationId());
             statement.setString(8, attempt.scope().name());
@@ -58,12 +58,12 @@ final class JdbcEventStatusRepository implements EventStatusRepository {
             statement.setString(10, attempt.destination());
             statement.setString(11, attempt.status().name());
             statement.setInt(12, attempt.retryCount());
-            statement.setString(13, attempt.nextRetryAt() == null ? null : attempt.nextRetryAt().toString());
+            connectionFactory.strategy().bindInstant(statement, 13, attempt.nextRetryAt());
             statement.setInt(14, attempt.retryEligible() ? 1 : 0);
             statement.setInt(15, attempt.terminal() ? 1 : 0);
             statement.setString(16, attempt.lastErrorCode());
             statement.setString(17, attempt.lastErrorMessage());
-            statement.setString(18, attempt.createdAt().toString());
+            connectionFactory.strategy().bindInstant(statement, 18, attempt.createdAt());
             if (statement.executeUpdate() != 1) {
                 throw new SQLException("Event status append affected an unexpected number of rows");
             }
@@ -96,7 +96,7 @@ final class JdbcEventStatusRepository implements EventStatusRepository {
                     created_at
                 from event_status
                 where event_id = ?
-                order by attempt_number
+                order by attempt_number,id
                 """;
         try (Connection connection = connectionFactory.open();
              PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -109,7 +109,7 @@ final class JdbcEventStatusRepository implements EventStatusRepository {
                             UUID.fromString(resultSet.getString("event_id")),
                             UUID.fromString(resultSet.getString("attempt_id")),
                             resultSet.getInt("attempt_number"),
-                            resultSet.getString("idempotency_key"),
+                            connectionFactory.strategy().decodeIdempotencyKey(resultSet.getString("idempotency_key")),
                             workflowInstanceId(resultSet.getString("workflow_instance_id")),
                             resultSet.getString("correlation_id"),
                             EventStatusScope.valueOf(resultSet.getString("status_scope")),
@@ -117,12 +117,12 @@ final class JdbcEventStatusRepository implements EventStatusRepository {
                             resultSet.getString("destination"),
                             EventStatusValue.valueOf(resultSet.getString("status_value")),
                             resultSet.getInt("retry_count"),
-                            instant(resultSet.getString("next_retry_at")),
+                            connectionFactory.strategy().readInstant(resultSet, "next_retry_at"),
                             resultSet.getInt("retry_eligible") == 1,
                             resultSet.getInt("terminal") == 1,
                             resultSet.getString("last_error_code"),
                             resultSet.getString("last_error_message"),
-                            Instant.parse(resultSet.getString("created_at"))));
+                            connectionFactory.strategy().readInstant(resultSet, "created_at")));
                 }
                 return attempts;
             }
@@ -135,7 +135,4 @@ final class JdbcEventStatusRepository implements EventStatusRepository {
         return value == null ? null : new WorkflowInstanceId(UUID.fromString(value));
     }
 
-    private static Instant instant(String value) {
-        return value == null ? null : Instant.parse(value);
-    }
 }

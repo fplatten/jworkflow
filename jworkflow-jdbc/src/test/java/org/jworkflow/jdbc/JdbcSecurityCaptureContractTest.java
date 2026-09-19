@@ -21,8 +21,7 @@ public final class JdbcSecurityCaptureContractTest {
         WorkflowDefinition definition = WorkflowDefinition.of("secure-onboarding", "1", "tax",
                 WorkflowNode.waitFor("tax", new WaitDefinition(new EventName("tax.submitted"), "employeeId", "done"), null),
                 WorkflowNode.end("done"));
-        try (WorkflowEngine built = WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE)
-                .jdbcUrl("jdbc:sqlite:" + database.toAbsolutePath()).initialize(true).timerPolling(false)
+        try (WorkflowEngine built = ContractBackend.engine(ContractBackend.url(database.toAbsolutePath())).initialize(true).timerPolling(false)
                 .definition(definition).eventCapturePolicy(MetadataOnlyEventPolicy.INSTANCE)
                 .eventPublisher(published::add).build()) {
             JdbcWorkflowEngine engine = (JdbcWorkflowEngine) built;

@@ -1,164 +1,201 @@
 package org.jworkflow.jdbc;
 
-import org.jworkflow.persistence.WorkflowPersistenceException;
-import org.jworkflow.persistence.WorkflowTransaction;
-import org.jworkflow.persistence.WorkflowTransactionManager;
-import org.jworkflow.persistence.WorkflowTransactionalWork;
-
+import org.jworkflow.persistence.*;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 
-/** Thread-bound JDBC transaction boundary shared by every repository using the same factory. */
+/** Thread-bound, joining transactions. Handlers are never automatically replayed. */
 public final class JdbcTransactionManager implements WorkflowTransactionManager {
     private final JdbcConnectionFactory connectionFactory;
     private final ThreadLocal<TransactionState> state = new ThreadLocal<>();
+    private final ThreadLocal<ArrayDeque<Runnable>> completing = new ThreadLocal<>();
+    private volatile Consumer<Throwable> completionFailureHandler;
 
     JdbcTransactionManager(JdbcConnectionFactory connectionFactory) {
         this.connectionFactory = Objects.requireNonNull(connectionFactory, "connectionFactory");
     }
 
-    @Override
-    public void execute(WorkflowTransaction transaction) {
+    /** Installs an optional diagnostic sink for failures after the durable outcome is known. */
+    public void setCompletionFailureHandler(Consumer<Throwable> handler) {
+        completionFailureHandler = Objects.requireNonNull(handler, "handler");
+    }
+
+    @Override public boolean supportsAfterCommit() { return true; }
+    @Override public boolean isTransactionActive() { return state.get()!=null; }
+
+    @Override public void afterCommit(Runnable notification) {
+        Objects.requireNonNull(notification, "notification");
+        TransactionState current = state.get();
+        if (current == null) flush(List.of(notification)); else current.notifications.add(notification);
+    }
+
+    @Override public void reportCompletionFailure(Throwable failure) {
+        Consumer<Throwable> handler = completionFailureHandler;
+        if (handler == null) WorkflowTransactionManager.super.reportCompletionFailure(failure);
+        else {
+            try { handler.accept(failure); }
+            catch (Throwable ignored) { WorkflowTransactionManager.super.reportCompletionFailure(failure); }
+        }
+    }
+
+    private void dispatch(Runnable notification) {
+        try { notification.run(); } catch (Throwable failure) { reportCompletionFailure(failure); }
+    }
+
+    private void flush(List<Runnable> notifications) {
+        ArrayDeque<Runnable> pending = completing.get();
+        if (pending != null) { pending.addAll(notifications); return; }
+        pending = new ArrayDeque<>(notifications);
+        completing.set(pending);
+        try { while (!pending.isEmpty()) dispatch(pending.removeFirst()); }
+        finally { completing.remove(); }
+    }
+
+    @Override public void execute(WorkflowTransaction transaction) {
         Objects.requireNonNull(transaction, "transaction");
         inTransaction(() -> { transaction.execute(); return null; });
     }
 
-    @Override
-    public <T> T inTransaction(WorkflowTransactionalWork<T> work) {
+    @Override public <T> T inTransaction(WorkflowTransactionalWork<T> work) {
         return executeInternal(work, false);
     }
 
-    /** Short SQLite write/claim boundary. No external I/O may occur inside this callback. */
-    public <T> T inImmediateTransaction(WorkflowTransactionalWork<T> work) {
+    /**
+     * Short write/claim boundary: SQLite uses BEGIN IMMEDIATE; PostgreSQL uses READ COMMITTED.
+     * Nested work joins its outer boundary; a SQLite deferred outer transaction is not upgraded.
+     * @param work database work, without external I/O
+     * @return the result of the work
+     * @param <T> result type
+     */
+    public <T> T inWriteTransaction(WorkflowTransactionalWork<T> work) {
         return executeInternal(work, true);
     }
 
-    private <T> T executeInternal(WorkflowTransactionalWork<T> work, boolean immediate) {
+    /** Compatibility alias for {@link #inWriteTransaction(WorkflowTransactionalWork)}. */
+    public <T> T inImmediateTransaction(WorkflowTransactionalWork<T> work) {
+        return inWriteTransaction(work);
+    }
+
+    private <T> T executeInternal(WorkflowTransactionalWork<T> work, boolean write) {
         Objects.requireNonNull(work, "work");
         TransactionState existing = state.get();
-        if (existing != null) {
-            return executeNested(work, existing);
+        if (existing == null) return executeOuter(work, write);
+        try { return work.execute(); }
+        catch (Throwable failure) {
+            existing.rollbackOnly = true;
+            if (existing.firstFailure == null) existing.firstFailure = failure;
+            throw propagate(failure, "work");
         }
-        return executeOuter(work, immediate);
     }
 
-    private <T> T executeOuter(WorkflowTransactionalWork<T> work, boolean immediate) {
+    private <T> T executeOuter(WorkflowTransactionalWork<T> work, boolean write) {
         Connection connection = null;
-        boolean originalAutoCommit = true;
-        boolean originalReadOnly = false;
+        boolean originalAuto = true, originalReadOnly = false, captured = false;
         int originalIsolation = Connection.TRANSACTION_NONE;
-        TransactionState outer = null;
-        boolean effectiveImmediate = false;
+        boolean immediate = false, started = false, ended = false, committed = false;
+        Throwable failure = null;
+        String phase = "setup";
+        T result = null;
+        TransactionState outer = new TransactionState();
         try {
             connection = connectionFactory.openPhysical();
-            originalAutoCommit = connection.getAutoCommit();
+            originalAuto = connection.getAutoCommit();
             originalReadOnly = connection.isReadOnly();
             originalIsolation = connection.getTransactionIsolation();
-            effectiveImmediate = immediate && connectionFactory.isSqlite(connection);
-            if (effectiveImmediate) beginImmediate(connection);
-            else connection.setAutoCommit(false);
-            outer = new TransactionState();
+            if (!originalAuto) throw new SQLException("Adapter requires an idle auto-commit connection");
+            captured = true;
+            JdbcDatabaseStrategy strategy = connectionFactory.strategy();
+            immediate = write && strategy.usesImmediateWriteTransaction();
+            if (originalReadOnly) connection.setReadOnly(false);
+            int isolation = strategy.transactionIsolation();
+            if (isolation != Connection.TRANSACTION_NONE && isolation != originalIsolation)
+                connection.setTransactionIsolation(isolation);
+            started = true;
+            if (immediate) boundary(connection, "begin immediate"); else connection.setAutoCommit(false);
             state.set(outer);
-            connectionFactory.bind(connection, effectiveImmediate);
-            T result = work.execute();
-            if (outer.rollbackOnly) {
-                rollback(connection, effectiveImmediate);
-                throw new WorkflowPersistenceException("JDBC transaction was marked rollback-only by nested work");
+            connectionFactory.bind(connection, immediate || !strategy.usesImmediateWriteTransaction());
+            phase = "work";
+            result = work.execute();
+            if(connectionFactory.rollbackCause()!=null)throw new WorkflowPersistenceException(
+                    "JDBC transaction was marked rollback-only by a stale lease guard",connectionFactory.rollbackCause());
+            if (outer.rollbackOnly) throw new WorkflowPersistenceException(
+                    "JDBC transaction was marked rollback-only by nested work", outer.firstFailure);
+            phase = "commit";
+            strategy.beforeCommit(connection);
+            if (immediate) boundary(connection, "commit"); else connection.commit();
+            committed = true;
+            ended = true;
+        } catch (Throwable original) {
+            failure = original;
+            if (started && !ended) {
+                try {
+                    if (immediate) boundary(connection, "rollback"); else connection.rollback();
+                    ended = true;
+                } catch (Throwable rollbackFailure) { suppress(failure, rollbackFailure); }
             }
-            commit(connection, effectiveImmediate);
-            return result;
-        } catch (Exception failure) {
-            rollbackAfterFailure(connection, outer, effectiveImmediate, failure);
-            throw propagate(failure);
         } finally {
-            cleanup(connection, outer, effectiveImmediate, originalAutoCommit, originalReadOnly, originalIsolation);
-        }
-    }
-
-    private void rollbackAfterFailure(
-            Connection connection, TransactionState outer, boolean immediate, Exception failure) {
-        if (connection != null && outer != null && !outer.completed) {
-            try {
-                rollback(connection, immediate);
-            } catch (SQLException rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
+            state.remove();
+            if (connection != null) {
+                if (connectionFactory.currentTransactionConnection() == connection) connectionFactory.unbind(connection);
+                // Never enable auto-commit after failed rollback: that could commit partial work.
+                Throwable cleanup = cleanup(connection, captured && (!started || ended),
+                        originalAuto, originalReadOnly, originalIsolation);
+                if (cleanup != null) {
+                    if (failure != null) suppress(failure, cleanup);
+                    else if (committed) reportCompletionFailure(cleanup);
+                    else { failure = cleanup; phase = "cleanup"; }
+                }
             }
         }
+        if (failure != null) throw propagate(failure, phase);
+        flush(outer.notifications);
+        return result;
     }
 
-    private void cleanup(Connection connection, TransactionState outer, boolean immediate,
-            boolean autoCommit, boolean readOnly, int isolation) {
-        state.remove();
-        if (connection == null) return;
-        if (outer != null && !outer.completed) rollbackQuietly(connection, immediate);
-        if (connectionFactory.currentTransactionConnection() == connection) connectionFactory.unbind(connection);
-        restoreAndClose(connection, autoCommit, readOnly, isolation);
-    }
-
-    private static <T> T executeNested(WorkflowTransactionalWork<T> work, TransactionState existing) {
-        try {
-            return work.execute();
-        } catch (Exception failure) {
-            existing.rollbackOnly = true;
-            throw propagate(failure);
+    private static Throwable cleanup(Connection connection, boolean restore, boolean auto,
+            boolean readOnly, int isolation) {
+        Throwable failure = null;
+        if (restore) {
+            try { if (connection.getAutoCommit() != auto) connection.setAutoCommit(auto); }
+            catch (Throwable problem) { failure = problem; }
+            try { if (connection.isReadOnly() != readOnly) connection.setReadOnly(readOnly); }
+            catch (Throwable problem) { failure = collect(failure, problem); }
+            try { if (connection.getTransactionIsolation() != isolation) connection.setTransactionIsolation(isolation); }
+            catch (Throwable problem) { failure = collect(failure, problem); }
         }
+        try { connection.close(); } catch (Throwable problem) { failure = collect(failure, problem); }
+        return failure;
     }
 
-    private void commit(Connection connection, boolean immediate) throws SQLException {
-        if (immediate) executeBoundary(connection, "commit"); else connection.commit();
-        state.get().completed = true;
+    private static Throwable collect(Throwable primary, Throwable secondary) {
+        if (primary == null) return secondary;
+        suppress(primary, secondary);
+        return primary;
     }
 
-    private void rollback(Connection connection, boolean immediate) throws SQLException {
-        if (immediate) executeBoundary(connection, "rollback"); else connection.rollback();
-        TransactionState current = state.get();
-        if (current != null) current.completed = true;
+    private static void suppress(Throwable primary, Throwable secondary) {
+        if (primary != secondary) primary.addSuppressed(secondary);
     }
 
-    private static void beginImmediate(Connection connection) throws SQLException {
-        if (!connection.getAutoCommit()) connection.setAutoCommit(true);
-        executeBoundary(connection, "begin immediate");
-    }
-
-    private static void executeBoundary(Connection connection, String sql) throws SQLException {
+    private static void boundary(Connection connection, String sql) throws SQLException {
         try (Statement statement = connection.createStatement()) { statement.execute(sql); }
     }
 
-    private static void restoreAndClose(Connection connection, boolean autoCommit, boolean readOnly, int isolation) {
-        try {
-            if (!connection.isClosed()) {
-                if (connection.isReadOnly() != readOnly) connection.setReadOnly(readOnly);
-                if (isolation != Connection.TRANSACTION_NONE && connection.getTransactionIsolation() != isolation) {
-                    connection.setTransactionIsolation(isolation);
-                }
-                if (connection.getAutoCommit() != autoCommit) connection.setAutoCommit(autoCommit);
-            }
-        } catch (SQLException ignored) {
-            // The primary transaction outcome is more useful; pools discard broken connections on close.
-        } finally {
-            try { connection.close(); } catch (SQLException ignored) {
-                // Closing is best-effort after the transaction has already completed.
-            }
-        }
-    }
-
-    private void rollbackQuietly(Connection connection, boolean immediate) {
-        try {
-            rollback(connection, immediate);
-        } catch (SQLException ignored) {
-            // Preserve the original Error while still attempting a best-effort rollback.
-        }
-    }
-
-    private static RuntimeException propagate(Exception failure) {
+    private static RuntimeException propagate(Throwable failure, String phase) {
+        if (failure instanceof Error error) throw error;
         if (failure instanceof RuntimeException runtime) return runtime;
-        return new WorkflowPersistenceException("JDBC transaction failed", failure);
+        return new JdbcTransactionException(phase, failure);
     }
 
     private static final class TransactionState {
-        private boolean rollbackOnly;
-        private boolean completed;
+        boolean rollbackOnly;
+        Throwable firstFailure;
+        final List<Runnable> notifications = new ArrayList<>();
     }
 }

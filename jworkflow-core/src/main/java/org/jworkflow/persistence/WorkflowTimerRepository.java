@@ -17,6 +17,13 @@ public interface WorkflowTimerRepository {
 
     List<WorkflowTimer> claimDue(Instant now, String ownerId, Instant claimUntil, int limit);
 
+    default List<WorkflowTimer> claimDueFenced(Instant now,String ownerId,Instant claimUntil,int limit){throw new UnsupportedOperationException("Fenced timer claims are not supported");}
+    /** Validate and hold this generation against reclaim until the enclosing transaction ends. */
+    default void requireClaim(java.util.UUID id,String owner,String token){throw new UnsupportedOperationException("Fenced timer claims are not supported");}
+    default void markFired(java.util.UUID id,String owner,String token,Instant at){throw new UnsupportedOperationException("Fenced timer completion is not supported");}
+    default void markFailed(java.util.UUID id,String owner,String token,String error,Instant next){throw new UnsupportedOperationException("Fenced timer retry is not supported");}
+    default void markDeadLetter(java.util.UUID id,String owner,String token,String error,Instant at){throw new UnsupportedOperationException("Fenced timer dead letter is not supported");}
+
     void markFired(java.util.UUID timerId, String ownerId, Instant firedAt);
 
     void markFailed(java.util.UUID timerId, String ownerId, String error, Instant nextAttemptAt);

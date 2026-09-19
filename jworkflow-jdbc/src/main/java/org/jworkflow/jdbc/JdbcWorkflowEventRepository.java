@@ -21,6 +21,12 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
     }
 
     @Override public void append(WorkflowEvent event) {
+        if (connections.currentTransactionConnection() == null) {
+            new JdbcTransactionManager(connections).inWriteTransaction(() -> { appendWithinTransaction(event); return null; });
+        } else appendWithinTransaction(event);
+    }
+
+    private void appendWithinTransaction(WorkflowEvent event) {
         String sql="""
                 insert into workflow_event (id,event_type,subject,action,source_system,correlation_id,causation_id,trace_id,
                 workflow_instance_id,business_key,tenant_id,taxonomy_version,occurred_at,received_at,headers,message_payload,
@@ -31,7 +37,7 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
             PreparedStatement statement=connection.prepareStatement(sql)) {
             EventMetadata m=event.metadata();
                 EventMessage message=event.message();
-            Long sequence=m.workflowInstanceId()==null?null:nextSequence(connection,m.workflowInstanceId());
+            Long sequence=m.workflowInstanceId()==null?null:connections.strategy().nextEventSequence(connection,m.workflowInstanceId().toString());
             statement.setString(1,m.eventId().toString());
                 statement.setString(2,m.eventName().value());
                 statement.setString(3,m.eventName().subject());
@@ -44,8 +50,8 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
                 statement.setString(10,m.businessKey());
             statement.setString(11,m.tenantId());
                 statement.setString(12,m.taxonomyVersion());
-                statement.setString(13,m.occurredAt().toString());
-            statement.setString(14,m.receivedAt().toString());
+                connections.strategy().bindInstant(statement, 13, m.occurredAt());
+            connections.strategy().bindInstant(statement, 14, m.receivedAt());
                 String metadata=json.write(m.headers());
                 statement.setString(15,metadata);
             Object payload=message.payload();
@@ -62,7 +68,7 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
                 else statement.setLong(21,sequence);
             statement.setString(22,metadata);
                 if(binary) statement.setBytes(23,json.copyBinary((byte[])payload));
-                else statement.setNull(23,Types.BLOB);
+                else statement.setNull(23,connections.strategy().binaryNullType());
             if(statement.executeUpdate()!=1) throw new SQLException("Event insert affected an unexpected number of rows");
         } catch(SQLException failure){ throw new WorkflowInfrastructureException("Failed to append workflow event "+event.metadata().eventId(),failure);
         }
@@ -79,7 +85,7 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
     }
 
     @Override public List<WorkflowEvent> findByWorkflowInstance(WorkflowInstanceId instanceId) {
-        String sql=TEXT_SELECT_PREFIX+COLUMNS+" from workflow_event where workflow_instance_id=? order by sequence_number,id";
+        String sql=TEXT_SELECT_PREFIX+COLUMNS+" from workflow_event where workflow_instance_id=? order by sequence_number nulls first,id";
         try(Connection connection=connections.open();
             PreparedStatement statement=connection.prepareStatement(sql)) {
             statement.setString(1,instanceId.toString());
@@ -95,7 +101,7 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
     @Override public List<WorkflowEvent> findAllAfter(Instant after,int limit){if(limit<1)throw new IllegalArgumentException("limit must be positive");
         String sql=TEXT_SELECT_PREFIX+COLUMNS+" from workflow_event where occurred_at>? order by occurred_at,id limit ?";
         try(Connection c=connections.open();
-        PreparedStatement s=c.prepareStatement(sql)){s.setString(1,(after==null?Instant.EPOCH:after).toString());
+        PreparedStatement s=c.prepareStatement(sql)){connections.strategy().bindInstant(s,1,after==null?Instant.EPOCH:after);
         s.setInt(2,limit);
         try(ResultSet rows=s.executeQuery()){ArrayList<WorkflowEvent> result=new ArrayList<>();
         while(rows.next())result.add(map(rows));
@@ -103,20 +109,11 @@ final class JdbcWorkflowEventRepository implements WorkflowEventRepository {
     }}catch(SQLException x){throw new WorkflowInfrastructureException("Failed workflow event stream query",x);
     }}
 
-    private long nextSequence(Connection connection,WorkflowInstanceId id)throws SQLException{
-        try(PreparedStatement statement=connection.prepareStatement("select coalesce(max(sequence_number),0)+1 from workflow_event where workflow_instance_id=?")){
-            statement.setString(1,id.toString());
-                try(ResultSet rows=statement.executeQuery()){ rows.next();
-                return rows.getLong(1);
-            }
-        }
-    }
-
     private WorkflowEvent map(ResultSet row)throws SQLException{
         EventMetadata metadata=new EventMetadata(UUID.fromString(row.getString("id")),new EventName(row.getString("event_type")),row.getString("source_system"),
                 row.getString("correlation_id"),row.getString("causation_id"),row.getString("trace_id"),instance(row.getString("workflow_instance_id")),
-                row.getString("business_key"),row.getString("tenant_id"),row.getString("taxonomy_version"),Instant.parse(row.getString("occurred_at")),
-                Instant.parse(row.getString("received_at")),strings(json.readPersistedMap(row.getString("headers"))));
+                row.getString("business_key"),row.getString("tenant_id"),row.getString("taxonomy_version"),connections.strategy().readInstant(row, "occurred_at"),
+                connections.strategy().readInstant(row, "received_at"),strings(json.readPersistedMap(row.getString("headers"))));
         Map<String,Object> stored=json.readMap(row.getString("message_payload"));
             byte[] binary=row.getBytes("message_payload_blob");
         Object payload=binary==null?stored.get("payload"):json.copyBinary(binary);

@@ -19,9 +19,11 @@ public record WorkflowTimer(
         String claimedBy,
         Instant claimUntil,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        String claimToken
 ) {
     public WorkflowTimer {
+        if (claimToken != null && (claimToken.isBlank() || claimedBy == null)) throw new IllegalArgumentException("claimToken requires an owner");
         timerId = timerId == null ? UUID.randomUUID() : timerId;
         Objects.requireNonNull(workflowInstanceId, "workflowInstanceId");
         Objects.requireNonNull(stepName, "stepName");
@@ -33,6 +35,13 @@ public record WorkflowTimer(
         }
         createdAt = createdAt == null ? Instant.now() : createdAt;
         updatedAt = updatedAt == null ? createdAt : updatedAt;
+    }
+
+    /** Compatibility constructor for records created before lease-generation fencing. */
+    public WorkflowTimer(UUID timerId, WorkflowInstanceId workflowInstanceId, String stepName, Instant dueAt,
+                         String targetNode, EventName emittedEvent, WorkflowTimerStatus status, int attemptCount,
+                         Instant nextAttemptAt, String claimedBy, Instant claimUntil, Instant createdAt, Instant updatedAt) {
+        this(timerId,workflowInstanceId,stepName,dueAt,targetNode,emittedEvent,status,attemptCount,nextAttemptAt,claimedBy,claimUntil,createdAt,updatedAt,null);
     }
 
     public WorkflowTimer(UUID timerId, WorkflowInstanceId workflowInstanceId, String stepName,

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+    <changeSet id="postgresql-001-baseline" author="org.jworkflow" dbms="postgresql" runInTransaction="true">
+        <sqlFile path="db/postgresql/migration/V1__postgresql_baseline.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
+    <changeSet id="postgresql-002-active-keyset" author="org.jworkflow" dbms="postgresql" runInTransaction="true">
+        <sqlFile path="db/postgresql/migration/V2__active_instance_keyset_index.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
+</databaseChangeLog>

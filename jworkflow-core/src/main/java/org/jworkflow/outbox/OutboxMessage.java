@@ -23,9 +23,11 @@ public record OutboxMessage(
         Instant nextAttemptAt,
         String lastError,
         String claimedBy,
-        Instant claimUntil
+        Instant claimUntil,
+        String claimToken
 ) {
     public OutboxMessage {
+        if (claimToken != null && (claimToken.isBlank() || claimedBy == null)) throw new IllegalArgumentException("claimToken requires an owner");
         messageId = messageId == null ? UUID.randomUUID() : messageId;
         Objects.requireNonNull(eventId, "eventId");
         if (destination == null || destination.isBlank()) throw new IllegalArgumentException("destination is required");
@@ -37,6 +39,13 @@ public record OutboxMessage(
         if ((claimedBy == null) != (claimUntil == null)) {
             throw new IllegalArgumentException("claimedBy and claimUntil must be set together");
         }
+    }
+
+    /** Compatibility constructor; legacy records carry no generation token. */
+    public OutboxMessage(UUID messageId,UUID eventId,String destination,String idempotencyKey,EventMessage message,
+                         String correlationId,String causationId,Instant createdAt,Instant publishedAt,OutboxMessageStatus status,
+                         int attemptCount,Instant nextAttemptAt,String lastError,String claimedBy,Instant claimUntil) {
+        this(messageId,eventId,destination,idempotencyKey,message,correlationId,causationId,createdAt,publishedAt,status,attemptCount,nextAttemptAt,lastError,claimedBy,claimUntil,null);
     }
 
     public CorrelationId correlationIdentity() { return CorrelationId.of(correlationId); }

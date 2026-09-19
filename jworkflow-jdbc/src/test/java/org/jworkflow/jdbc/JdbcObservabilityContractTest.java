@@ -29,9 +29,7 @@ public final class JdbcObservabilityContractTest {
                     .startAt("work")
                     .step("work", step -> step.action("work.execute").onSuccess("done"))
                     .end("done");
-            try (WorkflowEngine built = WorkflowEngine.builder()
-                    .type(WorkflowEngine.Type.SQLITE)
-                    .jdbcUrl("jdbc:sqlite:" + database)
+            try (WorkflowEngine built = ContractBackend.engine(ContractBackend.url(database))
                     .initialize()
                     .definition(definition)
                     .stepHandler("work.execute", context -> StepResult.success())

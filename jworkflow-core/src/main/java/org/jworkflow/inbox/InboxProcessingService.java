@@ -27,7 +27,9 @@ public final class InboxProcessingService {
     }
     public InboxProcessingResult process(InboxMessage claimed,String owner){
         if(claimed.status()!=InboxMessageStatus.CLAIMED||!Objects.equals(owner,claimed.claimedBy()))throw new InboxClaimException("Inbox message is not claimed by "+owner+": "+claimed.messageId());
-        return transactions.inTransaction(()->{List<Command> commands=translator.translate(claimed);
+        return transactions.inTransaction(()->{
+            inbox.requireClaim(claimed.messageId(),owner,claimed.claimToken());
+            List<Command> commands=translator.translate(claimed);
             if(commands==null||commands.isEmpty())throw new InboxStateException("Inbox translator produced no commands for "+claimed.messageId());
             ArrayList<Object> results=new ArrayList<>();
                 WorkflowInstanceId workflowId=null;
@@ -38,7 +40,7 @@ public final class InboxProcessingService {
                 else if(result instanceof WorkflowRoutingResult r&&!r.routedInstances().isEmpty())workflowId=r.routedInstances().get(0);
             }
             int attempt=claimed.attemptCount()+1;
-                inbox.markProcessed(claimed.messageId(),owner,clock.instant());
+                inbox.markProcessed(claimed.messageId(),owner,claimed.claimToken(),clock.instant());
                 inbox.appendAttempt(new InboxAttempt(null,claimed.messageId(),attempt,InboxMessageStatus.PROCESSED,null,null,clock.instant()));
             statuses.append(status(claimed,attempt,workflowId,EventStatusValue.SUCCESSFUL,false,null,null));
                 return new InboxProcessingResult(claimed.messageId(),results);

@@ -93,7 +93,7 @@ public final class JdbcJsonCodec {
         }
     }
 
-    /** Binary payloads use BLOB columns and never pass through JSON or platform character encodings. */
+    /** Binary payloads use SQLite BLOB/PostgreSQL bytea and never pass through JSON or character encodings. */
     public byte[] copyBinary(byte[] payload) {
         return payload == null ? null : payload.clone();
     }

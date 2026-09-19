@@ -21,9 +21,11 @@ public record InboxMessage(
         Instant nextAttemptAt,
         String lastError,
         String claimedBy,
-        Instant claimUntil
+        Instant claimUntil,
+        String claimToken
 ) {
     public InboxMessage {
+        if (claimToken != null && (claimToken.isBlank() || claimedBy == null)) throw new IllegalArgumentException("claimToken requires an owner");
         messageId = messageId == null ? UUID.randomUUID() : messageId;
         requireText(externalEventId, "externalEventId");
         requireText(sourceSystem, "sourceSystem");
@@ -34,6 +36,13 @@ public record InboxMessage(
         if ((claimedBy == null) != (claimUntil == null)) {
             throw new IllegalArgumentException("claimedBy and claimUntil must be set together");
         }
+    }
+
+    /** Compatibility constructor; legacy records carry no generation token. */
+    public InboxMessage(UUID messageId,String externalEventId,String sourceSystem,EventMessage message,String correlationId,
+                        String causationId,Instant receivedAt,Instant processedAt,InboxMessageStatus status,int attemptCount,
+                        Instant nextAttemptAt,String lastError,String claimedBy,Instant claimUntil) {
+        this(messageId,externalEventId,sourceSystem,message,correlationId,causationId,receivedAt,processedAt,status,attemptCount,nextAttemptAt,lastError,claimedBy,claimUntil,null);
     }
 
     public String deduplicationKey() { return sourceSystem + "\u0000" + externalEventId; }

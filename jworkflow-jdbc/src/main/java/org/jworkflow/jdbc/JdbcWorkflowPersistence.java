@@ -29,10 +29,8 @@ public final class JdbcWorkflowPersistence implements WorkflowPersistence {
 
     public static JdbcWorkflowPersistence create(String jdbcUrl,String username,String password,Driver driver,DataSource dataSource,
                                                   boolean initializeSchema,Map<String,String> settings){
-        Map<String,String> safe=settings==null?Map.of():settings;
-        JdbcConnectionFactory factory=new JdbcConnectionFactory(jdbcUrl,username,password,driver,dataSource,
-                Integer.parseInt(safe.getOrDefault("sqlite.busy-timeout-ms","5000")),
-                Boolean.parseBoolean(safe.getOrDefault("sqlite.wal-enabled","false")));
+        JdbcConnectionFactory factory=new JdbcConnectionFactory(null,jdbcUrl,username,password,driver,dataSource,settings);
+        factory.strategy();
         if(initializeSchema)JdbcSchemaInitializer.initialize(factory);
         return new JdbcWorkflowPersistence(factory);
     }

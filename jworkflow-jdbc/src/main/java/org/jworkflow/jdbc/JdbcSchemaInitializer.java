@@ -23,11 +23,16 @@ final class JdbcSchemaInitializer {
             new Migration(2, "durable workflow and messaging", "db/migration/V2__durable_workflow_and_messaging.sql"),
             new Migration(3, "timer attempt history", "db/migration/V3__timer_attempt_history.sql"),
             new Migration(4, "event routing indexes", "db/migration/V4__event_routing_indexes.sql"),
-            new Migration(5, "message redaction status", "db/migration/V5__message_redaction_status.sql"));
+            new Migration(5, "message redaction status", "db/migration/V5__message_redaction_status.sql"),
+            new Migration(6, "lease generation fencing", "db/migration/V6__lease_generation_fencing.sql"));
 
     private JdbcSchemaInitializer() { }
 
     static void initialize(JdbcConnectionFactory connectionFactory) {
+        connectionFactory.strategy().initializeSchema(connectionFactory);
+    }
+
+    static void initializeSqlite(JdbcConnectionFactory connectionFactory) {
         try (Connection connection = connectionFactory.openPhysical()) {
             applyMigrations(connection);
         } catch (Exception exception) {
@@ -116,7 +121,7 @@ final class JdbcSchemaInitializer {
         }
     }
 
-    private static String sha256(String value) throws NoSuchAlgorithmException {
+    static String sha256(String value) throws NoSuchAlgorithmException {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                 .digest(value.getBytes(StandardCharsets.UTF_8)));
     }
