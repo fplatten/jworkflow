@@ -13,6 +13,10 @@ All notable changes are recorded here. The project has not been released yet; ve
 
 ### Fixed
 
+- Timestamps written by the engine now come from the injected `Clock`. Command-result `created_at`, workflow
+  definition `created_at`/`updated_at`, and timer `created_at`/`updated_at` (scheduled, retried, fired and cancelled)
+  used the system clock even when a different clock was configured. Timer due times and lease decisions already used
+  the injected clock.
 - Durable transitions no longer start a background thread in their temporary engine, which could fire a retry timer
   and run a step handler a second time.
 - Expired inbox, outbox and timer leases now count as attempts; inbox and outbox messages that exhaust their attempts

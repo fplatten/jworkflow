@@ -33,6 +33,14 @@ public final class JdbcWorkflowPersistence implements WorkflowPersistence {
     }
     static JdbcWorkflowPersistence from(JdbcConnectionFactory connections){return new JdbcWorkflowPersistence(connections);}
     /**
+     * Uses the engine clock for timestamps written by repositories that are not given a time by their caller.
+     * @param clock engine clock
+     */
+    void useClock(java.time.Clock clock){
+        definitions.clock(clock);
+        timers.clock(clock);
+    }
+    /**
      * Applies the inbox and outbox attempt budgets used when expired leases are released.
      * @param settings adapter settings containing {@code inbox.max-attempts} and {@code outbox.max-attempts}
      */

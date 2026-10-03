@@ -734,7 +734,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 && (snapshot.status() == WorkflowStatus.RUNNING || snapshot.status() == WorkflowStatus.WAITING)
                 && snapshot.state().equals(timer.stepName())
                 && timer.status() == WorkflowTimerStatus.PENDING) {
-                    WorkflowTimer firedTimer = timer.fired();
+                    WorkflowTimer firedTimer = timer.fired(clock.instant());
                     timers.remove(timer);
                     retainFinishedTimer(firedTimer);
                     persistTimer(firedTimer);
@@ -1446,14 +1446,15 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         if (alreadyPending) {
             return;
         }
+        Instant dueAt = now.plus(node.timeout().duration());
         WorkflowTimer timer = new WorkflowTimer(
                 null,
                 snapshot.instanceId(),
                 snapshot.state(),
-                now.plus(node.timeout().duration()),
+                dueAt,
                 node.timeout().targetNode(),
                 node.timeout().emittedEvent(),
-                "PENDING");
+                WorkflowTimerStatus.PENDING, 0, dueAt, null, null, now, now);
         timers.add(timer);
         persistTimer(timer);
         ensureEventLoopStarted();
@@ -1468,14 +1469,16 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     }
 
     private void scheduleRetry(WorkflowSnapshot snapshot, WorkflowNode node, Duration backoff, int nextAttempt) {
+        Instant now = clock.instant();
+        Instant dueAt = now.plus(backoff);
         WorkflowTimer timer = new WorkflowTimer(
                 null,
                 snapshot.instanceId(),
                 node.name(),
-                clock.instant().plus(backoff),
+                dueAt,
                 node.name(),
                 null,
-                "PENDING");
+                WorkflowTimerStatus.PENDING, 0, dueAt, null, null, now, now);
         timers.add(timer);
         persistTimer(timer);
         ensureEventLoopStarted();
@@ -1502,7 +1505,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                     && timer.workflowInstanceId().equals(instanceId)
                     && (stepName == null || timer.stepName().equals(stepName))) {
                 timers.remove(timer);
-                WorkflowTimer canceled = timer.canceled();
+                WorkflowTimer canceled = timer.canceled(clock.instant());
                 retainFinishedTimer(canceled);
                 persistTimer(canceled);
             }

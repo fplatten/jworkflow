@@ -71,6 +71,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             this.connections=Objects.requireNonNull(connections);
             this.persistence=JdbcWorkflowPersistence.from(connections);
             persistence.configureLeaseAttemptLimits(settings);
+            persistence.useClock(Objects.requireNonNull(clock,"clock"));
         this.observer=Objects.requireNonNull(observer);
             this.listeners=new java.util.concurrent.ConcurrentHashMap<>(listeners==null?Map.of():listeners);
         this.lifecycleObserver=SafeWorkflowLifecycleObserver.isolate(Objects.requireNonNull(lifecycleObserver,"lifecycleObserver"));
@@ -344,7 +345,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             d.put(TEXT_EMITTED_EVENT_IDS,result instanceof StartWorkflowResult r?r.emittedEventIds():((WorkflowCommandResult)result).emittedEventIds());
             if(result instanceof WorkflowCommandResult r)d.put("eventStatusAttemptIds",r.eventStatusAttemptIds());
         }
-        CommandResultRecord stored=persistence.commandResults().save(new CommandResultRecord(key,type,hash,id,d,Instant.now()));
+        CommandResultRecord stored=persistence.commandResults().save(new CommandResultRecord(key,type,hash,id,d,clock.instant()));
         if(!Objects.equals(stored.workflowInstanceId(),id)||!new JdbcJsonCodec().write(stored.result()).equals(new JdbcJsonCodec().write(d))) {
             throw new org.jworkflow.persistence.PersistenceConstraintException("Command result changed outside command key protection; transaction must roll back");
         }

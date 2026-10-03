@@ -120,8 +120,18 @@ public record WorkflowTimer(
      * @return a timer value marked FIRED; this value transformation does not persist or validate a lease
      */
     public WorkflowTimer fired() {
+        return fired(Instant.now());
+    }
+
+    /**
+     * Returns a timer value marked FIRED at the supplied instant; this value transformation does not persist or
+     * validate a lease.
+     * @param at update time recorded on the returned value, normally from the engine clock
+     * @return a timer value marked FIRED
+     */
+    public WorkflowTimer fired(Instant at) {
         return new WorkflowTimer(timerId, workflowInstanceId, stepName, dueAt, targetNode, emittedEvent,
-                WorkflowTimerStatus.FIRED, attemptCount, nextAttemptAt, null, null, createdAt, Instant.now());
+                WorkflowTimerStatus.FIRED, attemptCount, nextAttemptAt, null, null, createdAt, at);
     }
 
     /**
@@ -129,7 +139,17 @@ public record WorkflowTimer(
      * @return a timer value marked CANCELED; this value transformation does not persist or validate a lease
      */
     public WorkflowTimer canceled() {
+        return canceled(Instant.now());
+    }
+
+    /**
+     * Returns a timer value marked CANCELED at the supplied instant; this value transformation does not persist or
+     * validate a lease.
+     * @param at update time recorded on the returned value, normally from the engine clock
+     * @return a timer value marked CANCELED
+     */
+    public WorkflowTimer canceled(Instant at) {
         return new WorkflowTimer(timerId, workflowInstanceId, stepName, dueAt, targetNode, emittedEvent,
-                WorkflowTimerStatus.CANCELED, attemptCount, nextAttemptAt, null, null, createdAt, Instant.now());
+                WorkflowTimerStatus.CANCELED, attemptCount, nextAttemptAt, null, null, createdAt, at);
     }
 }

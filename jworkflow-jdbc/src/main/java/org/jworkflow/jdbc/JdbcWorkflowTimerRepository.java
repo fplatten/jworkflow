@@ -18,8 +18,10 @@ final class JdbcWorkflowTimerRepository implements WorkflowTimerRepository {
     private static final String COLUMNS = "id,workflow_instance_id,due_at,status_value,step_name,target_node,emitted_event,attempt_count,next_attempt_at,claimed_by,claim_until,created_at,updated_at,claim_token";
     private static final String TEXT_SELECT_PREFIX = "select ";
     private final JdbcConnectionFactory connections;
+    private volatile java.time.Clock clock=java.time.Clock.systemUTC();
     JdbcWorkflowTimerRepository(JdbcConnectionFactory connections){this.connections=connections;
     }
+    void clock(java.time.Clock value){clock=Objects.requireNonNull(value,"clock");}
 
     /**
      * {@inheritDoc}
@@ -103,7 +105,7 @@ final class JdbcWorkflowTimerRepository implements WorkflowTimerRepository {
         try(Connection c=connections.open();
             PreparedStatement s=c.prepareStatement(sql)){connections.strategy().bindInstant(s, 1, next);
             s.setString(2,error);
-            connections.strategy().bindInstant(s, 3, Instant.now());
+            connections.strategy().bindInstant(s, 3, clock.instant());
             s.setString(4,id.toString());
             s.setString(5,owner);
             one(s,id,"timer failure");
@@ -143,7 +145,7 @@ final class JdbcWorkflowTimerRepository implements WorkflowTimerRepository {
      * {@inheritDoc}
      */
     @Override public void markFailed(UUID id,String owner,String token,String error,Instant next){
-        JdbcLeaseSupport.transition(connections,JdbcLeaseSupport.Queue.TIMER,id,owner,token,"status_value='RETRY_SCHEDULED',attempt_count=attempt_count+1,next_attempt_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null,updated_at=?",next,error,Instant.now());
+        JdbcLeaseSupport.transition(connections,JdbcLeaseSupport.Queue.TIMER,id,owner,token,"status_value='RETRY_SCHEDULED',attempt_count=attempt_count+1,next_attempt_at=?,last_error_message=?,claimed_by=null,claim_until=null,claim_token=null,updated_at=?",next,error,clock.instant());
     }
     /**
      * {@inheritDoc}

@@ -55,9 +55,14 @@ earlier `0.1.0-SNAPSHOT` build to the current one. See the [changelog](../../CHA
 - **`findByCorrelationId`** ignores finished instances; only two *active* matches are ambiguous.
 - **In-memory engine** keeps only the 10,000 most recently finished instances; older ones are evicted with their
   idempotency results.
+- **Recorded timestamps follow the injected `Clock`.** Command results, workflow definitions and timers now record
+  `created_at`/`updated_at` from the clock passed to `WorkflowEngine.builder().clock(...)` instead of the system clock.
+  Engines that use the default clock see no difference. Schema migration history still records system time.
 
 ## API changes
 
 - `WorkflowMutation` has a new `createdInstances` component. The previous five-argument constructor remains.
 - `InboxMessage.asReceived()` and `InboxProcessingService.partiallyRouted(...)` are new.
 - `JdbcJsonCodec.TYPED_NUMBERS_VERSION` is new.
+- `WorkflowTimer.fired(Instant)` and `WorkflowTimer.canceled(Instant)` are new; the no-argument forms remain and use
+  the system clock.

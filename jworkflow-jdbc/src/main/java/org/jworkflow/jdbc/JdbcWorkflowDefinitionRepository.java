@@ -24,7 +24,11 @@ final class JdbcWorkflowDefinitionRepository implements WorkflowDefinitionReposi
     private final JdbcConnectionFactory connections;
     private final JdbcDefinitionCodec codec = new JdbcDefinitionCodec();
 
+    private volatile java.time.Clock clock = java.time.Clock.systemUTC();
+
     JdbcWorkflowDefinitionRepository(JdbcConnectionFactory connections) { this.connections = Objects.requireNonNull(connections); }
+
+    void clock(java.time.Clock value) { clock = Objects.requireNonNull(value, "clock"); }
 
     /**
      * {@inheritDoc}
@@ -32,7 +36,7 @@ final class JdbcWorkflowDefinitionRepository implements WorkflowDefinitionReposi
     @Override public void save(WorkflowDefinition definition) {
         String canonical = codec.write(definition);
         String revision = definition.revision();
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         String sql = "insert into workflow_definition (id,workflow_key,workflow_version,workflow_revision,definition_text,checksum,created_at,updated_at,semantic_version,definition_source,canonical_json) values (?,?,?,?,?,?,?,?,?,?,?)";
         sql=connections.strategy().insertIgnoringDuplicate(sql,"workflow_key,workflow_version,workflow_revision");
         try (Connection connection = connections.open(); PreparedStatement statement = connection.prepareStatement(sql)) {
