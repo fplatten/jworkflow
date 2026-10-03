@@ -46,7 +46,7 @@ class LeaseUpgradeTest {
         }
         // No live V5 workers are present: old code cannot participate in generation fencing.
         for(int restart=0;restart<2;restart++)try(var engine=(JdbcWorkflowEngine)WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).dataSource(source).initialize(true).timerPolling(false).clock(Clock.fixed(NOW.plusSeconds(9),ZoneOffset.UTC)).build()){
-            var p=JdbcWorkflowPersistence.from(engine.connectionFactory());assertEquals(6,TransactionNotificationContract.count(source,"jworkflow_schema_history"));
+            var p=JdbcWorkflowPersistence.from(engine.connectionFactory());assertEquals(8,TransactionNotificationContract.count(source,"jworkflow_schema_history"));
             var inbox=p.inbox().findById(id).orElseThrow();assertEquals(Map.of("text","雪","nested",List.of(1,true)),inbox.message().payload());assertTrue(inbox.message().redacted());assertEquals(Map.of("retained","yes"),inbox.message().attributes());
             assertArrayEquals(binary,(byte[])p.outbox().findById(id).orElseThrow().message().payload());
             assertEquals(3,inbox.attemptCount());assertNull(inbox.claimToken());assertEquals("old-worker",inbox.claimedBy());

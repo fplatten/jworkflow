@@ -122,6 +122,57 @@ public final class JdbcTransactionManager implements WorkflowTransactionManager 
         return inWriteTransaction(work);
     }
 
+    /**
+     * Runs work that may fail independently of the enclosing transaction. Inside a transaction it runs under a
+     * savepoint: on failure only its own writes and deferred notifications are discarded and the enclosing work can
+     * still commit. Outside a transaction it behaves like {@link #inWriteTransaction(WorkflowTransactionalWork)}.
+     * A JVM Error, or a failure to roll back to the savepoint, still marks the enclosing transaction rollback-only.
+     * @param work database work, without external I/O
+     * @return the result of the work
+     * @param <T> result type
+     */
+    @SuppressWarnings("java:S1181") // Errors are rethrown after the enclosing transaction is poisoned.
+    public <T> T inSavepoint(WorkflowTransactionalWork<T> work) {
+        Objects.requireNonNull(work, "work");
+        TransactionState outer = state.get();
+        if (outer == null) return inWriteTransaction(work);
+        Connection connection = connectionFactory.currentTransactionConnection();
+        java.sql.Savepoint savepoint;
+        try { savepoint = connection.setSavepoint(); }
+        catch (SQLException failure) { return executeInternal(work, true); }
+        int notifications = outer.notifications.size();
+        boolean poisonedBefore = connectionFactory.rollbackCause() != null;
+        boolean rollbackOnlyBefore = outer.rollbackOnly;
+        Throwable firstFailureBefore = outer.firstFailure;
+        try {
+            T result = work.execute();
+            if (!poisonedBefore && connectionFactory.rollbackCause() != null) throw new WorkflowPersistenceException(
+                    "JDBC savepoint was marked rollback-only by a stale lease guard", connectionFactory.rollbackCause());
+            if (!rollbackOnlyBefore && outer.rollbackOnly) throw new WorkflowPersistenceException(
+                    "JDBC savepoint was marked rollback-only by nested work", outer.firstFailure);
+            connection.releaseSavepoint(savepoint);
+            return result;
+        } catch (Throwable failure) {
+            if (failure instanceof Error) {
+                outer.rollbackOnly = true;
+                if (outer.firstFailure == null) outer.firstFailure = failure;
+                throw propagate(failure, "work");
+            }
+            try { connection.rollback(savepoint); }
+            catch (SQLException rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+                outer.rollbackOnly = true;
+                if (outer.firstFailure == null) outer.firstFailure = failure;
+                throw propagate(failure, "work");
+            }
+            outer.notifications.subList(notifications, outer.notifications.size()).clear();
+            if (!poisonedBefore) connectionFactory.clearRollbackOnly();
+            outer.rollbackOnly = rollbackOnlyBefore;
+            outer.firstFailure = firstFailureBefore;
+            throw propagate(failure, "work");
+        }
+    }
+
     @SuppressWarnings("java:S1181") // A nested Error must mark the outer transaction rollback-only.
     private <T> T executeInternal(WorkflowTransactionalWork<T> work, boolean write) {
         Objects.requireNonNull(work, "work");

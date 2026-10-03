@@ -103,11 +103,6 @@
                     </execution>
                 </executions>
             </plugin>
-            <plugin>
-                <groupId>org.sonarsource.scanner.maven</groupId>
-                <artifactId>sonar-maven-plugin</artifactId>
-                <version>5.8.0.7211</version>
-            </plugin>
         </plugins>
     </build>
 

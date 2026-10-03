@@ -284,6 +284,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     }
     private List<WorkflowEvent> persist(WorkflowMutation m,boolean insert){if(insert)persistence.instances().insert(m.nextSnapshot());
         else persistence.instances().update(m.nextSnapshot(),m.previousSnapshot().lockVersion());
+        m.createdInstances().forEach(persistence.instances()::insert);
         writeProbe.get().accept(TEXT_SNAPSHOT);
         ArrayList<WorkflowEvent> captured=new ArrayList<>();
         for(WorkflowEvent source:m.events()){WorkflowEvent e=capture(source);
@@ -293,14 +294,26 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             outboxEnqueue.enqueue(e);
             writeProbe.get().accept("outbox");
         }
-    for(WorkflowTimer t:m.timersAfter()){
-            if(t.status()==WorkflowTimerStatus.CLAIMED&&(m.nextSnapshot().status()==WorkflowStatus.CANCELED||m.nextSnapshot().status()==WorkflowStatus.COMPLETED))
+    persistTimers(m.timersBefore(),m.timersAfter(),null);
+    return List.copyOf(captured);
+        }
+    /**
+     * Writes only timers the transition changed. Rewriting untouched timers would collide with a poller's claim and
+     * fail the command spuriously; a timer canceled while claimed or awaiting retry is canceled without a lease.
+     */
+    private void persistTimers(List<WorkflowTimer> before,List<WorkflowTimer> after,UUID skip){
+        Map<UUID,WorkflowTimer> previous=new HashMap<>();
+        for(WorkflowTimer t:before)if(t.timerId()!=null)previous.put(t.timerId(),t);
+        for(WorkflowTimer t:after){
+            if(t.timerId()!=null&&t.timerId().equals(skip))continue;
+            WorkflowTimer old=t.timerId()==null?null:previous.get(t.timerId());
+            if(t.equals(old))continue;
+            if(old!=null&&t.status()==WorkflowTimerStatus.CANCELED&&old.status()!=WorkflowTimerStatus.CANCELED)
                 persistence.timers().cancel(t.timerId(),clock.instant());
             else persistence.timers().save(t);
             writeProbe.get().accept("timer");
         }
-    return List.copyOf(captured);
-        }
+    }
     private Optional<CommandResultRecord> prior(String key,String type,String hash){if(key==null||key.isBlank())return Optional.empty();
         try {
             connections.strategy().lockCommand(connections.currentTransactionConnection(), key);
@@ -423,7 +436,11 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         ArrayList<WorkflowInstanceId> routed=new ArrayList<>();
         ArrayList<WorkflowInstanceId> failed=new ArrayList<>();
         for(WorkflowSnapshot candidate:eligible){WorkflowSnapshot target=Objects.requireNonNull(candidate,"eligible workflow");
-        try{RouteAttempt attempt=routeOne(event,target);
+        // Inside an enclosing transaction (such as inbox processing) each target gets a savepoint, so one failing
+        // target does not roll back delivery to the others.
+        WorkflowEvent routedEvent=event;
+        try{RouteAttempt attempt=persistence.transactions().isTransactionActive()
+                ?persistence.jdbcTransactions().inSavepoint(()->routeOne(routedEvent,target)):routeOne(event,target);
         if(attempt.outcome()==WorkflowRoutingOutcome.ROUTED){routed.add(target.instanceId());
         observeIncoming(WorkflowLifecycleEventType.EVENT_CORRELATED,event,target);
     }else if(requested.mode()==WorkflowRoutingMode.SINGLE){observeIncoming(WorkflowLifecycleEventType.EVENT_IGNORED,event,target);
@@ -521,9 +538,10 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     });
         timerPoller.scheduleWithFixedDelay(this::pollSafely,recovery.pollInterval.toMillis(),recovery.pollInterval.toMillis(),TimeUnit.MILLISECONDS);
         }
-    private void pollSafely(){if(closed.get())return;
+    private void pollSafely(){if(closed.get()||timerReconciliationRequired.get())return;
+        // Any escaping Throwable would silently cancel the schedule; a later bounded poll retries durable work.
         try{pollTimersOnce();
-    }catch(RuntimeException ignored){/* a later bounded poll retries durable work */}}
+    }catch(Throwable failure){JdbcWorkerDiagnostics.pollFailed("timer",failure);}}
     int pollTimersOnce(){
         if(timerReconciliationRequired.get())throw new WorkflowInfrastructureException("Timer polling paused: reconcile the failed transaction before recreating this engine",null);
         Instant now=clock.instant();
@@ -532,20 +550,37 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             persistence.outbox().releaseExpiredClaims(now);
         });
         List<WorkflowTimer> claimed=persistence.jdbcTransactions().inWriteTransaction(()->persistence.timers().claimDueFenced(now,workerId,now.plus(recovery.lease),recovery.batchSize));
+        RuntimeException first=null;
         for(WorkflowTimer timer:claimed) {
-            processClaimedTimer(timer);
+            // One failing timer must not strand the rest of the batch until its leases expire.
+            if(timerReconciliationRequired.get())break;
+            try{processClaimedTimer(timer);}
+            catch(RuntimeException failure){
+                if(first==null)first=failure;else first.addSuppressed(failure);
+                JdbcWorkerDiagnostics.itemFailed("timer",failure);
+            }
         }
+        if(first!=null)throw first;
         return claimed.size();
     }
     private void processClaimedTimer(WorkflowTimer claimed){
         try{
             Committed<WorkflowTimer> committed=persistence.jdbcTransactions().inWriteTransaction(()->{
+                // Lock the instance before the timer row: commands lock instance then timers, so the reverse
+                // order here could deadlock with a concurrent command on PostgreSQL.
+                lockInstance(claimed.workflowInstanceId());
                 persistence.timers().requireClaim(claimed.timerId(),workerId,claimed.claimToken());
                 WorkflowSnapshot current=require(claimed.workflowInstanceId());
+                if(!timerApplies(current,claimed)){
+                    persistence.timers().appendAttempt(new WorkflowTimerAttempt(null,claimed.timerId(),claimed.attemptCount()+1,WorkflowTimerStatus.CANCELED,workerId,"Workflow left the timer's step",clock.instant()));
+                    persistence.timers().cancel(claimed.timerId(),clock.instant());
+                    return new Committed<WorkflowTimer>(null,List.of());
+                }
                 requireDefinition(current);
                 WorkflowTransitionResult<WorkflowTimer> result=machineFor(current).fireTimer(current,persistence.timers().findByWorkflowInstance(current.instanceId()),claimed,clock.instant());
                 WorkflowMutation mutation=result.mutation();
                     persistence.instances().update(mutation.nextSnapshot(),current.lockVersion());
+                    mutation.createdInstances().forEach(persistence.instances()::insert);
                     writeProbe.get().accept(TEXT_SNAPSHOT);
                 ArrayList<WorkflowEvent> captured=new ArrayList<>();
                     for(WorkflowEvent source:mutation.events()){WorkflowEvent event=capture(source);
@@ -555,7 +590,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
                     outboxEnqueue.enqueue(event);
                     writeProbe.get().accept("outbox");
                 }
-                for(WorkflowTimer timer:mutation.timersAfter())if(!timer.timerId().equals(claimed.timerId()))persistence.timers().save(timer);
+                persistTimers(mutation.timersBefore(),mutation.timersAfter(),claimed.timerId());
                 persistence.timers().appendAttempt(new WorkflowTimerAttempt(null,claimed.timerId(),claimed.attemptCount()+1,WorkflowTimerStatus.FIRED,workerId,null,clock.instant()));
                 persistence.timers().markFired(claimed.timerId(),workerId,claimed.claimToken(),clock.instant());
                     writeProbe.get().accept("timer");
@@ -577,9 +612,21 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             });
             }
             catch(RuntimeException ignored){
-                if(reconcile)timerReconciliationRequired.set(true);
+                if(reconcile&&timerReconciliationRequired.compareAndSet(false,true))JdbcWorkerDiagnostics.paused("timer",failure);
                 failure.addSuppressed(ignored);
             }
+    }
+    private void lockInstance(WorkflowInstanceId id){
+        try(java.sql.Connection connection=connections.open()){connections.strategy().lockWorkflowInstance(connection,id.toString());}
+        catch(java.sql.SQLException failure){throw new WorkflowInfrastructureException("Failed to lock workflow "+id,failure);}
+    }
+    /**
+     * A claimed timer is obsolete once its workflow has ended or moved to another step. Firing it would fail on every
+     * retry, so it is canceled instead.
+     */
+    private static boolean timerApplies(WorkflowSnapshot current,WorkflowTimer timer){
+        return (current.status()==WorkflowStatus.RUNNING||current.status()==WorkflowStatus.WAITING)
+                &&current.state().equals(timer.stepName());
     }
 
     private static String safeMessage(Throwable failure){String message=failure.getMessage();

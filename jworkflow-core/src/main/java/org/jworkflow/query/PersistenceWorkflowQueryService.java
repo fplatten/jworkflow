@@ -83,9 +83,22 @@ public final class PersistenceWorkflowQueryService implements WorkflowQueryServi
   */
  public List<PendingWaitView> pendingWaits(int limit){positive(limit);
      ArrayList<PendingWaitView> result=new ArrayList<>();
-     for(WorkflowSnapshot s:persistence.instances().findActive(limit)){pendingWait(s).ifPresent(result::add);
-     if(result.size()==limit)break;
- }
+     // Page through active instances: filtering a single page of `limit` rows missed waits behind running or
+     // failed instances.
+     int page=Math.max(limit,100);
+     org.jworkflow.persistence.ActiveWorkflowCursor cursor=null;
+     while(result.size()<limit){
+         List<WorkflowSnapshot> rows=persistence.instances().findActiveAfter(cursor,page);
+         if(rows.isEmpty())break;
+         WorkflowSnapshot last=rows.get(rows.size()-1);
+         org.jworkflow.persistence.ActiveWorkflowCursor next=new org.jworkflow.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
+         if(next.equals(cursor))break; // a repository without keyset support returns the same page again
+         for(WorkflowSnapshot s:rows){pendingWait(s).ifPresent(result::add);
+             if(result.size()==limit)break;
+         }
+         if(rows.size()<page)break;
+         cursor=next;
+     }
     return List.copyOf(result);
  }
  /**

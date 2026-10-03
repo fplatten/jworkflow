@@ -1,0 +1,70 @@
+# Changelog
+
+All notable changes are recorded here. The project has not been released yet; versions follow
+[Semantic Versioning](https://semver.org/) once it is. See [upgrading](docs/guide/upgrading.md) for migration steps.
+
+## Unreleased (0.1.0-SNAPSHOT)
+
+### Security
+
+- The Groovy DSL compiler no longer runs Groovy's compile phases, which applied AST transforms: an annotation such as
+  `@ASTTest` could run code while a definition was loading. Sources are now only parsed and interpreted, and every
+  annotation is rejected.
+
+### Fixed
+
+- Durable transitions no longer start a background thread in their temporary engine, which could fire a retry timer
+  and run a step handler a second time.
+- Expired inbox, outbox and timer leases now count as attempts; inbox and outbox messages that exhaust their attempts
+  this way are dead-lettered instead of being redelivered forever.
+- PostgreSQL: a timer firing and a command on the same workflow no longer deadlock (the timer path locks the workflow
+  row first).
+- Commands no longer fail with `StaleWorkflowClaimException` when a poller has just claimed one of the workflow's
+  timers; only changed timers are written.
+- Leaving a step cancels its claimed and retry-pending timers too; timers that fire after their workflow moved on are
+  cancelled instead of retried forever.
+- Inbox, outbox and timer pollers survive JVM `Error`s and log failures; one failing item no longer abandons the rest
+  of its batch.
+- Sub-workflows: only a completed child takes the success route; waiting children are cancelled; recursion is bounded;
+  durable engines persist the child instance and never write timers for it.
+- Manual retry works for steps whose automatic retries are used up.
+- Cycles made only of automatic routing nodes are rejected instead of spinning forever.
+- In-memory engine: events and timers can no longer be stranded when the event loop shuts down, and an `Error` no
+  longer stops the loop.
+- SQLite timestamps are stored with a fixed-width fraction, so timers, leases and event paging compare in time order.
+- `Long`, `BigDecimal`, `BigInteger`, `Float`, `Short` and `Byte` workflow variables keep their type and exact value
+  after a save and reload.
+- One failing fan-out target no longer rolls back delivery to the others.
+- `pendingWaits` finds waits beyond the first page; `findByCorrelationId` ignores finished instances.
+- Header and attribute redaction is case-insensitive.
+- Inbox acceptance ignores caller-supplied status, attempts and claims.
+- Loop counters reset when the loop exits.
+- Durable and in-memory engines accept the same events.
+- Bounded memory: finished timers are no longer kept, idempotency locks are released, at most 10,000 finished
+  instances are retained in memory, and listener-failure numbering no longer keeps a growing map.
+
+### Changed
+
+- Validation rejects `PARALLEL`/`INCLUSIVE` gateways (they ran as exclusive) and timeouts with neither a target nor an
+  event.
+- The DSL rejects `sla` (it was ignored), checks that a step's `on` event is actually delivered to it, and reports a
+  misspelled `start at:` node.
+- Emit-only timeouts now emit their event and keep the workflow in place; the DSL accepts `timeout "...", emit: "..."`.
+- `WorkflowMutation` gains `createdInstances`; the previous constructor remains.
+
+### Added
+
+- SQLite migrations V7 (fixed-width timestamps) and V8, and PostgreSQL migration V3: an index on
+  `workflow_timer(workflow_instance_id)`.
+- `InboxMessage.asReceived()`, `InboxProcessingService.partiallyRouted(...)` and savepoint-scoped
+  `JdbcTransactionManager.inSavepoint(...)`.
+- User guides under `docs/guide/`: operations, threading and lifecycle, DSL reference, persisted data format and
+  upgrading.
+- POSIX equivalents of the PowerShell example scripts.
+
+### Build
+
+- CI runs on pushes to `main` and on pull requests, cancels superseded runs, and no longer repeats the ordinary suite
+  in every PostgreSQL job.
+- The POM's project URL and SCM point to `github.com/fplatten/jworkflow`; the Sonar server URL is no longer
+  hard-coded.

@@ -119,6 +119,7 @@ final class JdbcConnectionFactory {
     Connection currentTransactionConnection() { return transactionConnection.get(); }
     void markRollbackOnly(Throwable failure){if(transactionConnection.get()!=null&&rollbackCause.get()==null)rollbackCause.set(failure);}
     Throwable rollbackCause(){return rollbackCause.get();}
+    void clearRollbackOnly(){rollbackCause.remove();}
 
     void requireWriteTransaction(String operation) {
         if (transactionConnection.get() == null || !Boolean.TRUE.equals(writeTransaction.get())) {

@@ -28,7 +28,7 @@ class MigrationsPostgresIT {
             initialize(builtin);
             initialize(builtin);
             Flyway tool = flyway(flyway);
-            assertEquals(2, tool.migrate().migrationsExecuted);
+            assertEquals(3, tool.migrate().migrationsExecuted);
             assertEquals(0, tool.migrate().migrationsExecuted);
             tool.validate();
             migrateLiquibase(liquibase);
@@ -39,7 +39,7 @@ class MigrationsPostgresIT {
             assertEquals(expected, catalog(liquibase));
             assertApplicationCatalogs(List.of(builtin, flyway, liquibase));
             try (Connection connection = builtin.openConnection()) {
-                assertEquals(2, scalar(connection, "select count(*) from jworkflow_schema_history"));
+                assertEquals(3, scalar(connection, "select count(*) from jworkflow_schema_history"));
                 assertEquals(1, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='jworkflow_schema_history' and column_name='installed_at' and data_type='numeric' and numeric_scale=9"));
             }
             assertThrows(WorkflowInfrastructureException.class, () -> initialize(flyway));
@@ -67,7 +67,7 @@ class MigrationsPostgresIT {
                 first.get(30, TimeUnit.SECONDS); second.get(30, TimeUnit.SECONDS);
             } finally { workers.shutdownNow(); assertTrue(workers.awaitTermination(10, TimeUnit.SECONDS)); }
             try (Connection connection = schema.openConnection()) {
-                assertEquals(2, scalar(connection, "select count(*) from jworkflow_schema_history"));
+                assertEquals(3, scalar(connection, "select count(*) from jworkflow_schema_history"));
             }
         }
     }
@@ -110,7 +110,7 @@ class MigrationsPostgresIT {
             }
             initialize(schema); initialize(schema);
             try(var c=schema.openConnection();var statement=c.createStatement()) {
-                assertEquals(2,scalar(c,"select count(*) from jworkflow_schema_history"));
+                assertEquals(3,scalar(c,"select count(*) from jworkflow_schema_history"));
                 assertEquals(1,scalar(c,"select count(*) from workflow_lock where lock_key='retained' and expires_at=1800000000.123456789"));
                 assertEquals(1,scalar(c,"select count(*) from pg_indexes where schemaname=current_schema() and indexname='idx_workflow_instance_active_keyset'"));
                 try(var rows=statement.executeQuery("select checksum from jworkflow_schema_history where version=1")) {
@@ -130,7 +130,7 @@ class MigrationsPostgresIT {
                 assertEquals(0, scalar(connection, "select count(*) from information_schema.tables where table_schema=current_schema()"));
             }
             initialize(schema);
-            try (Connection connection = schema.openConnection()) { assertEquals(2, scalar(connection, "select count(*) from jworkflow_schema_history")); }
+            try (Connection connection = schema.openConnection()) { assertEquals(3, scalar(connection, "select count(*) from jworkflow_schema_history")); }
         }
     }
 

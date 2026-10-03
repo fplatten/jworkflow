@@ -109,9 +109,11 @@ final class JdbcWorkflowInstanceRepository implements WorkflowInstanceRepository
      */
     @Override public Optional<WorkflowSnapshot> findByCorrelationId(String correlationId) {
         if (correlationId == null || correlationId.isBlank()) return Optional.empty();
-        List<WorkflowSnapshot> matches=queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where correlation_id=? order by updated_at,id limit 2",correlationId);
-        if(matches.size()>1)throw new PersistenceConstraintException("Correlation ID is ambiguous without a workflow key: "+correlationId);
-        return matches.stream().findFirst();
+        // Finished instances never make a lookup ambiguous: prefer the one active match, else the latest instance.
+        List<WorkflowSnapshot> active=queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where correlation_id=? and status in ('RUNNING','WAITING','FAILED') order by updated_at,id limit 2",correlationId);
+        if(active.size()>1)throw new PersistenceConstraintException("Correlation ID matches several active workflows; use a workflow key: "+correlationId);
+        if(active.size()==1)return Optional.of(active.get(0));
+        return queryMany(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_instance where correlation_id=? order by updated_at desc,id desc limit 1",correlationId).stream().findFirst();
     }
 
     /**

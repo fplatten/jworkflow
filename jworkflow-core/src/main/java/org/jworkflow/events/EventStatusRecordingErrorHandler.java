@@ -2,15 +2,12 @@ package org.jworkflow.events;
 
 
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 /**
  * Subscriber-error adapter that appends failed delivery status using the supplied repository.
  */
 public final class EventStatusRecordingErrorHandler implements EventSubscriberErrorHandler {
     private final EventStatusRepository repository;
-    private final ConcurrentMap<String, Integer> attemptsBySubscriberAndEvent = new ConcurrentHashMap<>();
 
     /**
      * Constructs EventStatusRecordingErrorHandler with the supplied collaborators and configuration.
@@ -27,15 +24,18 @@ public final class EventStatusRecordingErrorHandler implements EventSubscriberEr
     @Override
     public void handle(EventDeliveryFailure failure) {
         Objects.requireNonNull(failure, "failure");
-        int attemptNumber = attemptsBySubscriberAndEvent.merge(key(failure), 1, Integer::sum);
-        repository.append(EventStatusAttempt.listenerFailure(
-                failure.event(),
-                failure.subscriberId(),
-                attemptNumber,
-                failure.error()));
-    }
-
-    private static String key(EventDeliveryFailure failure) {
-        return failure.event().metadata().eventId() + ":" + failure.subscriberId();
+        // The next attempt number comes from recorded history rather than an in-memory map that grew with every
+        // failed event. Serialized so concurrent failures for one event cannot pick the same number.
+        synchronized (this) {
+            int attemptNumber = 1 + repository.findAttempts(failure.event().metadata().eventId()).stream()
+                    .filter(attempt -> attempt.scope() == EventStatusScope.LISTENER
+                            && Objects.equals(attempt.handlerId(), failure.subscriberId()))
+                    .mapToInt(EventStatusAttempt::attemptNumber).max().orElse(0);
+            repository.append(EventStatusAttempt.listenerFailure(
+                    failure.event(),
+                    failure.subscriberId(),
+                    attemptNumber,
+                    failure.error()));
+        }
     }
 }

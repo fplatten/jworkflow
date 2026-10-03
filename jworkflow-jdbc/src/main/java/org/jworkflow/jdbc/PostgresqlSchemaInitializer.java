@@ -15,7 +15,8 @@ import java.util.Set;
 final class PostgresqlSchemaInitializer {
     static final List<Migration> MIGRATIONS = List.of(new Migration(1, "PostgreSQL baseline",
             "db/postgresql/migration/V1__postgresql_baseline.sql"),
-            new Migration(2, "Active instance keyset index", "db/postgresql/migration/V2__active_instance_keyset_index.sql"));
+            new Migration(2, "Active instance keyset index", "db/postgresql/migration/V2__active_instance_keyset_index.sql"),
+            new Migration(3, "Timer instance index", "db/postgresql/migration/V3__timer_instance_index.sql"));
     // A separate advisory-lock namespace from future command idempotency locks.
     static final int LOCK_NAMESPACE = 0x4a57534d;
 

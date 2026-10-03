@@ -88,7 +88,7 @@ public final class JdbcJsonCodecContractTest {
         check("wrong".equals(codec.readPersistedMap(
                 "{\"format\":\"wrong\",\"version\":1,\"value\":{}}").get("format")),
                 "ordinary legacy JSON objects must remain readable");
-        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("{\"format\":\"jworkflow-json\",\"version\":2,\"value\":{}}"));
+        expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("{\"format\":\"jworkflow-json\",\"version\":3,\"value\":{}}"));
         expect(PersistenceSerializationException.class, () -> codec.readPersistedMap("{\"format\":\"jworkflow-json\",\"version\":1}"));
     }
 

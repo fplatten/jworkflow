@@ -1,8 +1,12 @@
 package org.jworkflow.model;
 
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -45,6 +49,7 @@ public final class DefinitionValidator {
             }
             validateNode(node, nodes, errors);
         }
+        validateAutomaticCycles(nodes, errors);
         if (!hasTerminal) {
             errors.add(error("terminal.required", "Workflow definition must contain at least one terminal node", definition.name()));
         } else {
@@ -110,6 +115,18 @@ public final class DefinitionValidator {
         validateStructuredNode(node, nodes, errors);
         if (node.type() == WorkflowNodeType.GATEWAY && node.transitions().isEmpty()) {
             errors.add(error("gateway.transitions.required", "Gateway must declare at least one route", node.name()));
+        }
+        // Only exclusive (first matching route) gateways are implemented; accepting other types would silently
+        // run them as exclusive.
+        if (node.type() == WorkflowNodeType.GATEWAY && node.gatewayType() != null
+                && node.gatewayType() != GatewayType.EXCLUSIVE) {
+            errors.add(error("gateway.type.unsupported",
+                    "Only EXCLUSIVE gateways are supported, not " + node.gatewayType(), node.name()));
+        }
+        if (node.timeout() != null && (node.timeout().targetNode() == null || node.timeout().targetNode().isBlank())
+                && node.timeout().emittedEvent() == null) {
+            errors.add(error("timeout.action.required",
+                    "Timeout must declare a target node, an emitted event, or both", node.name()));
         }
     }
 
@@ -204,6 +221,69 @@ public final class DefinitionValidator {
             pending.add(node.subWorkflow().successTargetNode());
             pending.add(node.subWorkflow().failureTargetNode());
         }
+    }
+
+    /**
+     * Gateways, forks, sub-workflow calls and loop exits advance without waiting for input. A cycle made only of such
+     * edges would spin forever while holding the instance lock. A loop's body edge is excluded because its iteration
+     * guard bounds it; its exit edge is included because the guard resets when the loop exits.
+     */
+    private static void validateAutomaticCycles(Map<String, WorkflowNode> nodes, ArrayList<DefinitionValidationError> errors) {
+        Map<String, Integer> state = new HashMap<>();
+        for (String name : nodes.keySet()) {
+            String cycleNode = findAutomaticCycle(name, nodes, state);
+            if (cycleNode != null) {
+                errors.add(error("routing.cycle",
+                        "Automatic routing forms a cycle with no step, wait or bounded loop body: " + cycleNode, cycleNode));
+                return;
+            }
+        }
+    }
+
+    private static String findAutomaticCycle(String start, Map<String, WorkflowNode> nodes, Map<String, Integer> state) {
+        // Iterative depth-first search: 1 = on the current path, 2 = finished.
+        ArrayDeque<Iterator<String>> stack = new ArrayDeque<>();
+        ArrayDeque<String> path = new ArrayDeque<>();
+        if (!isAutomatic(nodes.get(start)) || state.containsKey(start)) return null;
+        state.put(start, 1);
+        path.push(start);
+        stack.push(automaticTargets(nodes.get(start)).iterator());
+        while (!stack.isEmpty()) {
+            Iterator<String> next = stack.peek();
+            if (!next.hasNext()) {
+                stack.pop();
+                state.put(path.pop(), 2);
+                continue;
+            }
+            String target = next.next();
+            WorkflowNode node = target == null ? null : nodes.get(target);
+            if (!isAutomatic(node)) continue;
+            Integer seen = state.get(target);
+            if (seen != null && seen == 1) return target;
+            if (seen == null) {
+                state.put(target, 1);
+                path.push(target);
+                stack.push(automaticTargets(node).iterator());
+            }
+        }
+        return null;
+    }
+
+    private static boolean isAutomatic(WorkflowNode node) {
+        return node != null && (node.type() == WorkflowNodeType.GATEWAY || node.type() == WorkflowNodeType.FORK
+                || node.type() == WorkflowNodeType.SUB_WORKFLOW || node.type() == WorkflowNodeType.LOOP);
+    }
+
+    private static List<String> automaticTargets(WorkflowNode node) {
+        ArrayList<String> targets = new ArrayList<>();
+        if (node.type() == WorkflowNodeType.GATEWAY) node.transitions().forEach(transition -> targets.add(transition.targetNode()));
+        if (node.fork() != null) targets.add(node.fork().joinNode());
+        if (node.loop() != null) targets.add(node.loop().nextNode());
+        if (node.subWorkflow() != null) {
+            targets.add(node.subWorkflow().successTargetNode());
+            targets.add(node.subWorkflow().failureTargetNode());
+        }
+        return targets;
     }
 
     private static void validateOptionalTarget(

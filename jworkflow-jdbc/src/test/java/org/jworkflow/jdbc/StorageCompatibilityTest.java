@@ -19,17 +19,33 @@ class StorageCompatibilityTest {
         assertDoesNotThrow(() -> StorageValueContract.exactTimesAndRevisions(persistence));
     }
 
-    @Test void sqliteMixedFractionOrderingIsCharacterizedNotClaimedCorrect() {
+    @Test void sqliteMixedFractionTimestampsCompareInTimeOrder() {
         JdbcWorkflowPersistence persistence=persistence("ordering");
         Instant whole=Instant.parse("2026-01-01T00:00:00Z"), fraction=whole.plusNanos(1);
         var timer=StorageValueContract.timer(WorkflowInstanceId.random(),fraction,null);
         persistence.timers().save(timer);
-        // Existing ISO string ordering places '.' before 'Z': a future timer is incorrectly due.
-        assertEquals(timer.timerId(),persistence.timers().dueTimers(whole).get(0).timerId());
+        // ISO text put '.' before 'Z', so a timer 1ns in the future used to look due.
+        assertTrue(persistence.timers().dueTimers(whole).isEmpty());
+        assertEquals(timer.timerId(),persistence.timers().dueTimers(fraction).get(0).timerId());
         var first=StorageValueContract.snapshot(WorkflowInstanceId.random(),whole);
         var later=StorageValueContract.snapshot(WorkflowInstanceId.random(),fraction);
-        persistence.instances().insert(first); persistence.instances().insert(later);
-        assertEquals(later.instanceId(),persistence.instances().findActive(1).get(0).instanceId());
+        persistence.instances().insert(later); persistence.instances().insert(first);
+        assertEquals(first.instanceId(),persistence.instances().findActive(1).get(0).instanceId());
+    }
+
+    @Test void fixedWidthMigrationRewritesLegacyTimestamps() throws Exception {
+        String url="jdbc:sqlite:"+directory.resolve("legacy.db");
+        JdbcWorkflowPersistence.create(url,null,null,new org.sqlite.JDBC(),null,true,Map.of());
+        try(Connection connection=DriverManager.getConnection(url);Statement statement=connection.createStatement()) {
+            statement.executeUpdate("insert into workflow_lock(lock_key,owner_id,expires_at) values('a','o','2026-01-01T00:00:00Z'),('b','o','2026-01-01T00:00:00.5Z'),('c','o','2026-01-01T00:00:00.123456789Z')");
+            statement.executeUpdate(JdbcSchemaInitializer.read("db/migration/V7__fixed_width_timestamps.sql").lines()
+                    .filter(line->line.startsWith("update workflow_lock ")).findFirst().orElseThrow());
+            try(ResultSet rows=statement.executeQuery("select expires_at from workflow_lock order by expires_at")) {
+                for(String expected:new String[]{"2026-01-01T00:00:00.000000000Z","2026-01-01T00:00:00.123456789Z","2026-01-01T00:00:00.500000000Z"}) {
+                    assertTrue(rows.next());assertEquals(expected,rows.getString(1));
+                }
+            }
+        }
     }
 
     @Test void numericInstantCodecRejectsPrecisionAndRangeLoss() {

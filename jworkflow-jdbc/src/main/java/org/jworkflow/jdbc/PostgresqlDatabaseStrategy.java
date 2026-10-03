@@ -48,6 +48,19 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
     /**
      * {@inheritDoc}
      */
+    @Override public void lockWorkflowInstance(Connection connection, String instanceId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("select id from workflow_instance where id=? for update")) {
+            statement.setString(1, instanceId);
+            try (ResultSet rows = statement.executeQuery()) {
+                // A missing row is reported by the caller's subsequent instance lookup.
+                rows.next();
+            }
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     @Override public void lockCommand(Connection connection, String key) throws SQLException {
         if (connection.getAutoCommit()) throw new SQLException("Command lock requires a transaction");
         String schema;

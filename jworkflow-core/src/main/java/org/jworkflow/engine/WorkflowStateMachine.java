@@ -2,8 +2,6 @@ package org.jworkflow.engine;
 
 import org.jworkflow.events.EventPublisher;
 import org.jworkflow.events.WorkflowEvent;
-import org.jworkflow.model.WorkflowNode;
-import org.jworkflow.model.WorkflowNodeType;
 import org.jworkflow.model.WorkflowStatus;
 import org.jworkflow.model.WorkflowDefinitionRegistry;
 import org.jworkflow.model.BranchConditionEvaluator;
@@ -97,7 +95,7 @@ public final class WorkflowStateMachine {
                     result.workflowVersion(), result.businessKey(), result.correlationId(), result.acceptedAt(),
                     normalized, result.emittedEventIds(), result.idempotentRepeat());
             return new WorkflowTransitionResult<>(result,
-                    new WorkflowMutation(null, normalized, session.events, List.of(), session.engine.allTimers()));
+                    session.mutation(null, normalized, List.of()));
         }
     }
 
@@ -127,17 +125,7 @@ public final class WorkflowStateMachine {
         if (snapshot.status() != WorkflowStatus.RUNNING && snapshot.status() != WorkflowStatus.WAITING) return false;
         var definition = definitions.find(snapshot.workflowKey(), snapshot.workflowVersion()).orElse(null);
         if (definition == null || !definition.revision().equals(snapshot.workflowRevision())) return false;
-        WorkflowNode node = definition.nodes().get(snapshot.state());
-        if (node == null) return false;
-        String eventName = event.eventName().value();
-        if (node.type() == WorkflowNodeType.WAIT) {
-            return node.waitDefinition().eventName().value().equals(eventName);
-        }
-        if (node.type() != WorkflowNodeType.STEP) return false;
-        if (node.transitions().stream().anyMatch(transition -> transition.emittedEvent() != null
-                && transition.emittedEvent().value().equals(eventName))) return true;
-        return snapshot.state().equals(definition.startNode())
-                && eventName.equals(definition.metadata().get("startEvent"));
+        return InMemoryWorkflowEngine.acceptsEvent(definition, snapshot, event.eventName().value());
     }
 
     /**
@@ -212,7 +200,7 @@ public final class WorkflowStateMachine {
                             "Claimed timer is no longer applicable to workflow " + current.instanceId()));
             WorkflowSnapshot next = withLockVersion(session.engine.snapshot(current.instanceId()), current.lockVersion() + 1);
             return new WorkflowTransitionResult<>(fired,
-                    new WorkflowMutation(current, next, session.events, timers, session.engine.allTimers()));
+                    session.mutation(current, next, timers));
         }
     }
 
@@ -227,7 +215,7 @@ public final class WorkflowStateMachine {
             result = new WorkflowCommandResult(result.commandId(), result.workflowInstanceId(), result.status(), normalized,
                     result.emittedEventIds(), result.eventStatusAttemptIds(), result.idempotentRepeat());
             return new WorkflowTransitionResult<>(result,
-                    new WorkflowMutation(current, normalized, session.events, before, session.engine.allTimers()));
+                    session.mutation(current, normalized, before));
         }
     }
 
@@ -247,6 +235,17 @@ public final class WorkflowStateMachine {
      */
     private record Session(InMemoryWorkflowEngine engine, List<WorkflowEvent> events) implements AutoCloseable {
         @Override public void close() { engine.close();
+        }
+
+        /**
+         * Keeps timers for the transitioned instance only; sub-workflow children run to an end inside the
+         * transition and are returned as created instances so the caller persists them too.
+         */
+        WorkflowMutation mutation(WorkflowSnapshot previous, WorkflowSnapshot next, List<WorkflowTimer> timersBefore) {
+            List<WorkflowTimer> timersAfter = engine.allTimers().stream()
+                    .filter(timer -> timer.workflowInstanceId().equals(next.instanceId())).toList();
+            return new WorkflowMutation(previous, next, events, timersBefore, timersAfter,
+                    engine.snapshotsOtherThan(next.instanceId()).stream().map(child -> withLockVersion(child, 0)).toList());
         }
     }
 

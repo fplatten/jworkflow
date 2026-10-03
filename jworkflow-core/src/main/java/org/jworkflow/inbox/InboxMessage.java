@@ -121,4 +121,14 @@ public record InboxMessage(
     private static void requireText(String value, String name) {
         if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " is required");
     }
+
+    /**
+     * Returns this message as newly received: processing state, attempts, errors and any claim are cleared, so an
+     * accepted message is always processed regardless of the lifecycle fields its producer supplied.
+     * @return a copy in the RECEIVED state with no attempts and no claim
+     */
+    public InboxMessage asReceived() {
+        return new InboxMessage(messageId, externalEventId, sourceSystem, message, correlationId, causationId, receivedAt,
+                null, InboxMessageStatus.RECEIVED, 0, null, null, null, null, null);
+    }
 }

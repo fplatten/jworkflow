@@ -41,7 +41,6 @@ public final class GroovyWorkflowDslCompiler {
     private static final String TEXT_CONTEXT = "context";
     private static final String TEXT_PREDICATE = "predicate";
     private static final String TEXT_ARGUMENTS = "arguments";
-    private static final String TEXT_ON_BREACH = "onBreach";
     private static final String TEXT_DSL_SYNTAX = "dsl.syntax";
     private static final String TEXT_SYNTAX = "syntax";
     private static final Set<String> OPERATORS = Set.of("eq", "ne", "gt", "gte", "lt", "lte", "contains");
@@ -102,6 +101,7 @@ public final class GroovyWorkflowDslCompiler {
         String startEvent = null;
         String correlation = null;
         LinkedHashMap<String, WorkflowNode> nodes = new LinkedHashMap<>();
+        LinkedHashMap<String, MethodCallExpression> stepTriggers = new LinkedHashMap<>();
         for (MethodCallExpression call : calls(body.getCode(), source, TEXT_WORKFLOW, 1)) {
             switch (method(call, source)) {
                 case TEXT_VERSION -> version = once(version, singleString(call, source), source, call, TEXT_VERSION);
@@ -113,7 +113,7 @@ public final class GroovyWorkflowDslCompiler {
                     if (a.named.containsKey("at")) start = once(start, string(a.named.get("at"), source, "start at"), source, call, "start at");
                     if (a.named.containsKey("when")) startEvent = once(startEvent, event(a.named.get("when"), source), source, call, "start when");
                 }
-                case "step" -> put(nodes, step(call, source), call, source);
+                case "step" -> put(nodes, step(call, source, stepTriggers), call, source);
                 case TEXT_WAIT_FOR -> put(nodes, waitNode(call, source), call, source);
                 case TEXT_SUB_WORKFLOW -> put(nodes, subWorkflow(call, source), call, source);
                 case "fork" -> {
@@ -134,11 +134,10 @@ public final class GroovyWorkflowDslCompiler {
             if (nodes.isEmpty()) throw grammar(source, root, "event-started workflow requires a node");
             start = nodes.keySet().iterator().next();
         }
-        if (!nodes.containsKey(start) && !nodes.isEmpty()) {
-            nodes.put(start, new WorkflowNode(start, WorkflowNodeType.GATEWAY, null, null, null, null, null, null,
-                    GatewayType.EXCLUSIVE, null, null, null, null,
-                    List.of(new WorkflowTransition("start", nodes.keySet().iterator().next(), null, null)), null));
-        }
+        // Report an unknown `start at:` node instead of papering over it with a synthetic gateway that hid typos.
+        if (!nodes.containsKey(start)) throw failure("start.unknown", DslDiagnosticCategory.DOMAIN_VALIDATION, source, root,
+                "start at", "Start node does not exist: " + start);
+        validateStepTriggers(stepTriggers, nodes, start, startEvent, source);
         long transitionCount = nodes.values().stream().mapToLong(node -> node.transitions().size()).sum();
         if (transitionCount > options.maxTransitions()) throw limit(source, root, "Workflow has too many transitions");
         LinkedHashMap<String, String> metadata = new LinkedHashMap<>();
@@ -149,7 +148,25 @@ public final class GroovyWorkflowDslCompiler {
     }
 
     @SuppressWarnings("java:S3776") // Explicit branches keep the security allowlist auditable.
-    private WorkflowNode step(MethodCallExpression call, String source) {
+    /**
+     * `on "event"` declares the event that brings a workflow into a step. It is checked, not decorative: the event
+     * must be the workflow's start event for the start step, or be emitted on a transition into the step.
+     */
+    private void validateStepTriggers(Map<String, MethodCallExpression> triggers, Map<String, WorkflowNode> nodes,
+                                      String start, String startEvent, String source) {
+        for (Map.Entry<String, MethodCallExpression> trigger : triggers.entrySet()) {
+            String step = trigger.getKey();
+            String event = event(single(trigger.getValue(), source), source);
+            boolean delivered = (step.equals(start) && event.equals(startEvent))
+                    || nodes.values().stream().flatMap(node -> node.transitions().stream())
+                    .anyMatch(transition -> step.equals(transition.targetNode()) && transition.emittedEvent() != null
+                            && event.equals(transition.emittedEvent().value()));
+            if (!delivered) throw grammar(source, trigger.getValue(), "step " + step + " declares on \"" + event
+                    + "\" but no start event or incoming transition delivers that event");
+        }
+    }
+
+    private WorkflowNode step(MethodCallExpression call, String source, Map<String, MethodCallExpression> triggers) {
         requireImplicit(call, source);
         Args a = args(call, source).positional(1, source, call).named(Set.of(), source, call);
         String name = string(a.positionals.get(0), source, "step name");
@@ -162,7 +179,10 @@ public final class GroovyWorkflowDslCompiler {
             ListenerInvocation listener = null;
         for (MethodCallExpression item : calls(a.closure(source, call).getCode(), source, "step", 2)) {
             switch (method(item, source)) {
-                case "on" -> event(single(item, source), source);
+                case "on" -> {
+                    event(single(item, source), source);
+                    if (triggers.putIfAbsent(name, item) != null) throw grammar(source, item, "on may be declared only once");
+                }
                 case "action" -> action = once(action, singleString(item, source), source, item, "action");
                 case "retry" -> {
                     if (retry != null) throw grammar(source, item, "retry may be declared only once");
@@ -172,7 +192,8 @@ public final class GroovyWorkflowDslCompiler {
                             duration(r.named.get(TEXT_BACKOFF), source, TEXT_BACKOFF));
                 }
                 case TEXT_TIMEOUT -> timeout = once(timeout, timeout(item, source), source, item, TEXT_TIMEOUT);
-                case "sla" -> validateSla(item, source);
+                case "sla" -> throw grammar(source, item,
+                        "sla is not supported; use timeout \"<duration>\", emit: \"<event>\" to announce a breach");
                 case "run" -> listener = once(listener, listener(item, source), source, item, "run");
                 case TEXT_ON_SUCCESS -> success = once(success, target(item, source), source, item, TEXT_ON_SUCCESS);
                 case TEXT_ON_FAILURE -> failure = once(failure, target(item, source), source, item, TEXT_ON_FAILURE);
@@ -410,16 +431,10 @@ public final class GroovyWorkflowDslCompiler {
     }
 
     private TimeoutDefinition timeout(MethodCallExpression call, String source) {
-        Args a = args(call, source).positional(1, source, call).named(Set.of("goTo"), source, call).noClosure(source, call);
+        Args a = args(call, source).positional(1, source, call).named(Set.of("goTo", "emit"), source, call).noClosure(source, call);
         return new TimeoutDefinition(duration(a.positionals.get(0), source, TEXT_TIMEOUT),
-                a.named.containsKey("goTo") ? string(a.named.get("goTo"), source, "goTo") : null, null);
-    }
-
-    private void validateSla(MethodCallExpression call, String source) {
-        Args a = args(call, source).positional(1, source, call).named(Set.of(TEXT_ON_BREACH), source, call)
-                .required(Set.of(TEXT_ON_BREACH), source, call).noClosure(source, call);
-        duration(a.positionals.get(0), source, "sla");
-            string(a.named.get(TEXT_ON_BREACH), source, TEXT_ON_BREACH);
+                a.named.containsKey("goTo") ? string(a.named.get("goTo"), source, "goTo") : null,
+                a.named.containsKey("emit") ? new EventName(event(a.named.get("emit"), source)) : null);
     }
 
     private Route route(MethodCallExpression call, String source) {

@@ -61,12 +61,25 @@ public final class InboxProcessingService {
                 else if(result instanceof WorkflowCommandResult r)workflowId=r.workflowInstanceId();
                 else if(result instanceof WorkflowRoutingResult r&&!r.routedInstances().isEmpty())workflowId=r.routedInstances().get(0);
             }
+            InboxProcessingResult partial=new InboxProcessingResult(claimed.messageId(),results);
+            // Keep successful fan-out deliveries but leave the message claimed: the caller schedules a retry, which
+            // repeats delivered targets idempotently and retries only the failed ones.
+            if(partiallyRouted(partial))return partial;
             int attempt=claimed.attemptCount()+1;
                 inbox.markProcessed(claimed.messageId(),owner,claimed.claimToken(),clock.instant());
                 inbox.appendAttempt(new InboxAttempt(null,claimed.messageId(),attempt,InboxMessageStatus.PROCESSED,null,null,clock.instant()));
             statuses.append(status(claimed,attempt,workflowId,EventStatusValue.SUCCESSFUL,false,null,null));
                 return new InboxProcessingResult(claimed.messageId(),results);
             });
+    }
+    /**
+     * Returns whether processing routed an event to only some of its targets, so the message still needs a retry.
+     * @param result processing result
+     * @return true when any route reported a partial failure
+     */
+    public static boolean partiallyRouted(InboxProcessingResult result){
+        return result!=null&&result.commandResults().stream().anyMatch(r->r instanceof WorkflowRoutingResult routing
+                &&routing.outcome()==org.jworkflow.routing.WorkflowRoutingOutcome.PARTIAL_FAILURE);
     }
     /**
      * Builds an append-only event-status record from inbox processing metadata.

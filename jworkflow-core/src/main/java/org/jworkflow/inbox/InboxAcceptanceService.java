@@ -27,6 +27,7 @@ public final class InboxAcceptanceService {
      * @throws NullPointerException if message is null
      */
     public InboxInsertResult accept(InboxMessage message){Objects.requireNonNull(message);
-        return transactions.inTransaction(()->repository.insertIfAbsent(message));
+        InboxMessage received=message.asReceived();
+        return transactions.inTransaction(()->repository.insertIfAbsent(received));
     }
 }

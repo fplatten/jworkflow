@@ -12,6 +12,17 @@ import java.util.Map;
 /** Database-specific connection and initialization policy shared by a persistence bundle. */
 interface JdbcDatabaseStrategy {
     /**
+     * Formats UTC text with a fixed nine-digit fraction, so SQLite's text comparison matches time order.
+     * {@link Instant#toString()} drops or shortens the fraction, which makes ":00Z" sort after ":00.5Z". Years
+     * outside 0000-9999 cannot be fixed-width and keep the ISO form.
+     * @param value timestamp to format
+     * @return sortable UTC text
+     */
+    static String sortableInstant(Instant value) {
+        if (value.isBefore(SortableInstant.FIRST) || value.isAfter(SortableInstant.LAST)) return value.toString();
+        return SortableInstant.FORMAT.format(value);
+    }
+    /**
      * Returns the durable backend implemented by this strategy.
      * @return the durable backend implemented by this strategy
      */
@@ -51,6 +62,14 @@ interface JdbcDatabaseStrategy {
      * @throws SQLException if the database operation fails
      */
     default void lockCommand(Connection connection, String key) throws SQLException { }
+    /**
+     * Locks a workflow instance row for the current transaction so timer processing takes the instance lock before
+     * any timer row lock, the same order commands use. SQLite relies on its serialized write transaction.
+     * @param connection transaction-bound JDBC connection; ownership remains with the enclosing adapter
+     * @param instanceId workflow instance identity
+     * @throws SQLException if the database operation fails
+     */
+    default void lockWorkflowInstance(Connection connection, String instanceId) throws SQLException { }
     /**
      * Returns atomic claim SQL for this queue, or null to select the serialized SQLite claim path.
      * @param queue fixed durable queue whose lease metadata is used
@@ -111,7 +130,7 @@ interface JdbcDatabaseStrategy {
      * @throws SQLException if the database operation fails
      */
     default void bindInstant(PreparedStatement statement, int index, Instant value) throws SQLException {
-        statement.setString(index, value == null ? null : value.toString());
+        statement.setString(index, value == null ? null : sortableInstant(value));
     }
 
     /**
@@ -212,5 +231,14 @@ interface JdbcDatabaseStrategy {
             case POSTGRESQL -> PostgresqlDatabaseStrategy.loadDriver();
             case IN_MEMORY -> throw new IllegalArgumentException("In-memory workflows do not use JDBC");
         }
+    }
+
+    /** Holder for the fixed-width format, kept out of the interface's public constants. */
+    final class SortableInstant {
+        static final Instant FIRST = Instant.parse("0000-01-01T00:00:00Z");
+        static final Instant LAST = Instant.parse("9999-12-31T23:59:59.999999999Z");
+        static final java.time.format.DateTimeFormatter FORMAT = java.time.format.DateTimeFormatter
+                .ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'").withZone(java.time.ZoneOffset.UTC);
+        private SortableInstant() { }
     }
 }

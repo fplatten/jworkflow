@@ -98,7 +98,7 @@ public final class JdbcTransactionSchemaContractTest {
         JdbcSchemaInitializer.initialize(factory);
         JdbcSchemaInitializer.initialize(factory);
         try (Connection connection = factory.open()) {
-            check(scalar(connection, "select count(*) from jworkflow_schema_history") == 6,
+            check(scalar(connection, "select count(*) from jworkflow_schema_history") == 8,
                     "initializer must record each migration exactly once");
         }
     }

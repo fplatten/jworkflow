@@ -54,15 +54,17 @@ public final class FilteringEventCapturePolicy implements EventCapturePolicy {
         LinkedHashSet<String> result = new LinkedHashSet<>();
         for (String value : values) {
             if (value == null || value.isBlank()) throw new IllegalArgumentException("filter names must not be blank");
-            result.add(value);
+            result.add(value.toLowerCase(Locale.ROOT));
         }
         return Set.copyOf(result);
     }
 
     private static Map<String,String> filtered(Map<String,String> values, Set<String> removed) {
         if (values.isEmpty() || removed.isEmpty()) return values;
+        // Names match case-insensitively: HTTP-style headers such as "authorization" must not slip past a filter
+        // configured as "Authorization".
         LinkedHashMap<String,String> result = new LinkedHashMap<>(values);
-        removed.forEach(result::remove);
+        result.keySet().removeIf(name -> name != null && removed.contains(name.toLowerCase(Locale.ROOT)));
         return Collections.unmodifiableMap(result);
     }
 }

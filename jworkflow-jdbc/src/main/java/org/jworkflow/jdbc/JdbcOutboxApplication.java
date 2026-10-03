@@ -55,7 +55,16 @@ public final class JdbcOutboxApplication implements AutoCloseable {
         Instant now=clock.instant();
         persistence.transactions().execute(()->persistence.outbox().releaseExpiredClaims(now));
         List<OutboxMessage> claimed=persistence.jdbcTransactions().inWriteTransaction(()->persistence.outbox().claimEligibleFenced(now,workerId,now.plus(lease),batchSize));
-        for(OutboxMessage message:claimed)publisher.publish(message,workerId);
+        RuntimeException first=null;
+        for(OutboxMessage message:claimed){
+            // One failing message must not strand the rest of the batch until its leases expire.
+            try{publisher.publish(message,workerId);}
+            catch(RuntimeException failure){
+                if(first==null)first=failure;else first.addSuppressed(failure);
+                JdbcWorkerDiagnostics.itemFailed("outbox",failure);
+            }
+        }
+        if(first!=null)throw first;
         return claimed.size();
     }
     /**
@@ -93,9 +102,9 @@ public final class JdbcOutboxApplication implements AutoCloseable {
     });
         poller.scheduleWithFixedDelay(this::pollSafely,pollInterval.toMillis(),pollInterval.toMillis(),TimeUnit.MILLISECONDS);
     }private void pollSafely(){if(closed.get())return;
+        // Any escaping Throwable would silently cancel the schedule; durable claims stay retryable on the next poll.
         try{pollOnce();
-    }catch(RuntimeException ignored){
-            // Durable claims remain retryable; the next scheduled poll will try again.
+    }catch(Throwable failure){JdbcWorkerDiagnostics.pollFailed("outbox",failure);
         }}
     /**
      * {@inheritDoc}

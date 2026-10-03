@@ -18,8 +18,7 @@ workflow("order-fulfillment") {
 
     step("chargePayment") {
         on "inventory.reserved"
-        timeout "PT2M"
-        sla "PT5M", onBreach: "paymentSlaBreached"
+        timeout "PT5M", emit: "payment.delayed"
 
         run { event, context ->
             context.listener("paymentChargeListener").onEvent(event)

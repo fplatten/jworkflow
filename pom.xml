@@ -11,7 +11,7 @@
 
     <name>org.jworkflow</name>
     <description>Lightweight Java workflow runtime with durable execution, replayable events, and inbox/outbox integration patterns.</description>
-    <url>https://github.com/jworkflow-org/jworkflow</url>
+    <url>https://github.com/fplatten/jworkflow</url>
 
     <licenses>
         <license>
@@ -23,15 +23,16 @@
 
     <developers>
         <developer>
-            <id>jworkflow-org</id>
-            <name>org.jworkflow Contributors</name>
+            <id>fplatten</id>
+            <name>jworkflow contributors</name>
+            <url>https://github.com/fplatten</url>
         </developer>
     </developers>
 
     <scm>
-        <connection>scm:git:https://github.com/jworkflow-org/jworkflow.git</connection>
-        <developerConnection>scm:git:https://github.com/jworkflow-org/jworkflow.git</developerConnection>
-        <url>https://github.com/jworkflow-org/jworkflow</url>
+        <connection>scm:git:https://github.com/fplatten/jworkflow.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/fplatten/jworkflow.git</developerConnection>
+        <url>https://github.com/fplatten/jworkflow</url>
         <tag>HEAD</tag>
     </scm>
 
@@ -60,7 +61,7 @@
         <sonar.maven.version>5.8.0.7211</sonar.maven.version>
         <sonar.projectKey>jworkflow</sonar.projectKey>
         <sonar.projectName>jworkflow</sonar.projectName>
-        <sonar.host.url>http://localhost:9000</sonar.host.url>
+        <!-- Supply the Sonar server with -Dsonar.host.url or SONAR_HOST_URL; never publish a fixed host. -->
         <sonar.sources>src/main/java</sonar.sources>
         <sonar.tests>src/test/java</sonar.tests>
         <sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>

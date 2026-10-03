@@ -10,4 +10,8 @@
         <sqlFile path="db/postgresql/migration/V2__active_instance_keyset_index.sql"
                  relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
     </changeSet>
+    <changeSet id="postgresql-003-timer-instance" author="org.jworkflow" dbms="postgresql" runInTransaction="true">
+        <sqlFile path="db/postgresql/migration/V3__timer_instance_index.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
 </databaseChangeLog>

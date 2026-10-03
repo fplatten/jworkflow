@@ -71,6 +71,19 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     private final Clock clock;
     private final EventCapturePolicy eventCapturePolicy;
     private final boolean backgroundEventLoop;
+    private static final System.Logger EVENT_LOOP_LOGGER = System.getLogger("org.jworkflow.engine");
+    /**
+     * Finished (completed or canceled) instances kept for queries and idempotent repeats. Older finished instances
+     * are evicted with their idempotency results so a long-running engine does not grow without bound.
+     */
+    static final int MAX_RETAINED_FINISHED_INSTANCES = 10_000;
+    private final java.util.concurrent.ConcurrentLinkedQueue<WorkflowInstanceId> finishedInstances =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.atomic.AtomicInteger finishedCount = new java.util.concurrent.atomic.AtomicInteger();
+    private final Map<WorkflowInstanceId, java.util.Set<String>> resultKeysByInstance = new ConcurrentHashMap<>();
+    /** Maximum nested sub-workflow calls; deeper calls take the failure route. */
+    static final int MAX_SUB_WORKFLOW_DEPTH = 16;
+    private static final ThreadLocal<int[]> SUB_WORKFLOW_DEPTH = ThreadLocal.withInitial(() -> new int[1]);
 
     @SuppressWarnings("java:S107") // Internal composition root; clients use scoped factories or the builder.
     private InMemoryWorkflowEngine(
@@ -312,8 +325,12 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         }
     }
 
+    /**
+     * Starts the loop unless one is running. Always synchronized: an unsynchronized fast path could observe a loop
+     * that is about to exit and leave newly queued work with no loop to process it. Callers must enqueue work first.
+     */
     private void ensureEventLoopStarted() {
-        if (!backgroundEventLoop || eventExecutor.get() != null) {
+        if (!backgroundEventLoop || !running.get()) {
             return;
         }
         synchronized (this) {
@@ -356,13 +373,26 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                     }
                 }
                 return;
-            } catch (Exception exception) {
-                if (event != null && persistence != null) {
-                    WorkflowEvent failedEvent = event;
-                    persistence.transactions().execute(() -> persistence.eventStatuses().append(
-                            EventStatusAttempt.listenerFailure(failedEvent, "workflow-engine", 1, exception)));
-                }
+            } catch (Throwable failure) {
+                // Any escaping Throwable would end the loop while eventExecutor still looked live, so no later
+                // publish could restart it.
+                recordEventLoopFailure(event, failure);
             }
+        }
+    }
+
+    private void recordEventLoopFailure(WorkflowEvent event, Throwable failure) {
+        EVENT_LOOP_LOGGER.log(System.Logger.Level.WARNING, "jworkflow event loop failed with {0}; continuing",
+                failure.getClass().getName());
+        if (event == null || persistence == null) {
+            return;
+        }
+        try {
+            persistence.transactions().execute(() -> persistence.eventStatuses().append(
+                    EventStatusAttempt.listenerFailure(event, "workflow-engine", 1, failure)));
+        } catch (Throwable recordingFailure) {
+            EVENT_LOOP_LOGGER.log(System.Logger.Level.WARNING, "jworkflow event loop could not record failure: {0}",
+                    recordingFailure.getClass().getName());
         }
     }
 
@@ -476,6 +506,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         }
         instances.put(instanceId, snapshot);
         instancesByBusinessKey.put(instanceKey(command.workflowKey(), command.businessKey()), instanceId);
+        recordFinished(null, snapshot);
         scheduleTimeout(definition, snapshot, now);
         WorkflowEvent startedEvent = workflowStartedEvent(command, snapshot, now);
         persistStateAndEvent(snapshot, startedEvent);
@@ -691,6 +722,11 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return List.copyOf(timers);
     }
 
+    /** Instances this transient engine created besides {@code owner}, such as completed sub-workflow children. */
+    List<WorkflowSnapshot> snapshotsOtherThan(WorkflowInstanceId owner) {
+        return instances.values().stream().filter(snapshot -> !snapshot.instanceId().equals(owner)).toList();
+    }
+
     @SuppressWarnings("java:S3776") // Timer guards form one atomic state transition.
     private WorkflowTimer fireTimer(WorkflowTimer timer) {
         WorkflowSnapshot snapshot = instances.get(timer.workflowInstanceId());
@@ -700,8 +736,17 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 && timer.status() == WorkflowTimerStatus.PENDING) {
                     WorkflowTimer firedTimer = timer.fired();
                     timers.remove(timer);
-                    timers.add(firedTimer);
+                    retainFinishedTimer(firedTimer);
                     persistTimer(firedTimer);
+                    if (!hasTimeoutTarget(timer.targetNode())) {
+                        // An emit-only timeout announces the breach and leaves the workflow where it is.
+                        WorkflowSnapshot current = updateStatus(snapshot, snapshot.state(), snapshot.status(), snapshot.variables());
+                        if (timer.emittedEvent() != null) {
+                            eventPublisher.publish(simpleLifecycleEvent(timer.emittedEvent().value(), current, Map.of("step", timer.stepName())));
+                        }
+                        eventPublisher.publish(simpleLifecycleEvent("timer.fired", current, Map.of("step", timer.stepName())));
+                        return firedTimer;
+                    }
                     WorkflowSnapshot updated = updateStatus(
                             snapshot,
                             timer.targetNode(),
@@ -1099,18 +1144,13 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         if (node == null || node.type() != WorkflowNodeType.STEP) {
             throw new WorkflowInvalidStateException("Retry target is not a workflow step: " + stepId);
         }
-        int attempts = ((Number) snapshot.variables().getOrDefault(retryKey(stepId), 0)).intValue();
-        if (node.retryPolicy() != null && attempts >= node.retryPolicy().maxAttempts()) {
-            throw new WorkflowInvalidStateException("Retry attempts exhausted for step " + stepId);
-        }
-        WorkflowSnapshot runningSnapshot = updateStatus(snapshot, snapshot.state(), WorkflowStatus.RUNNING, snapshot.variables());
-        Duration backoff = node.retryPolicy() == null ? Duration.ZERO : node.retryPolicy().backoff();
-        if (!backoff.isZero()) {
-            scheduleRetry(runningSnapshot, node, backoff, attempts + 1);
-            return updateStatus(runningSnapshot, runningSnapshot.state(), WorkflowStatus.WAITING, runningSnapshot.variables());
-        }
+        // A step only reaches FAILED after its automatic attempts are used up, so an operator retry runs the step
+        // now and starts a fresh automatic-retry budget instead of being refused.
+        LinkedHashMap<String, Object> variables = new LinkedHashMap<>(snapshot.variables());
+        variables.remove(retryKey(stepId));
+        WorkflowSnapshot runningSnapshot = updateStatus(snapshot, snapshot.state(), WorkflowStatus.RUNNING, variables);
         eventPublisher.publish(simpleLifecycleEvent("retry.scheduled", runningSnapshot,
-                Map.of("step", stepId, TEXT_ATTEMPT, Integer.toString(attempts + 1))));
+                Map.of("step", stepId, TEXT_ATTEMPT, "1")));
         return advanceCurrentStep(runningSnapshot, null);
     }
 
@@ -1285,8 +1325,31 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         return otherwise;
     }
 
+    /**
+     * Runs a sub-workflow to completion inside the caller's step. Only a COMPLETED child takes the success route. A
+     * child that would have to wait for events or timers is canceled and takes the failure route, because nothing
+     * would resume the parent later. Nesting deeper than {@link #MAX_SUB_WORKFLOW_DEPTH} (for example, a workflow
+     * that calls itself) also takes the failure route instead of overflowing the stack.
+     */
     private SubWorkflowRoute callSubWorkflow(WorkflowNode node, WorkflowSnapshot callerSnapshot) {
         SubWorkflowDefinition subWorkflow = node.subWorkflow();
+        int[] depth = SUB_WORKFLOW_DEPTH.get();
+        if (depth[0] >= MAX_SUB_WORKFLOW_DEPTH) {
+            LinkedHashMap<String, Object> variables = new LinkedHashMap<>(callerSnapshot.variables());
+            variables.put("__jworkflow.subWorkflow." + node.name() + ".status", "DEPTH_EXCEEDED");
+            return new SubWorkflowRoute(subWorkflow.failureTargetNode(), subWorkflow.failureEvent(), variables);
+        }
+        depth[0]++;
+        try {
+            return runSubWorkflow(node, subWorkflow, callerSnapshot);
+        } finally {
+            if (--depth[0] == 0) {
+                SUB_WORKFLOW_DEPTH.remove();
+            }
+        }
+    }
+
+    private SubWorkflowRoute runSubWorkflow(WorkflowNode node, SubWorkflowDefinition subWorkflow, WorkflowSnapshot callerSnapshot) {
         Map<String, Object> inputs = subWorkflowInputs(subWorkflow, callerSnapshot.variables());
         StartWorkflowResult result = start(new StartWorkflowCommand(
                 subWorkflow.workflowName(),
@@ -1302,7 +1365,15 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         LinkedHashMap<String, Object> variables = new LinkedHashMap<>(callerSnapshot.variables());
         variables.put("__jworkflow.subWorkflow." + node.name() + ".instanceId", result.workflowInstanceId().toString());
         variables.put("__jworkflow.subWorkflow." + node.name() + ".status", childSnapshot.status().name());
-        if (childSnapshot.status() == WorkflowStatus.FAILED) {
+        if (childSnapshot.status() == WorkflowStatus.RUNNING || childSnapshot.status() == WorkflowStatus.WAITING) {
+            WorkflowSnapshot child = childSnapshot;
+            withInstanceLock(child.instanceId(), () -> {
+                updateStatus(child, child.state(), WorkflowStatus.CANCELED, child.variables());
+                cancelPendingTimers(child.instanceId());
+                return null;
+            });
+        }
+        if (childSnapshot.status() != WorkflowStatus.COMPLETED) {
             return new SubWorkflowRoute(
                     subWorkflow.failureTargetNode(),
                     subWorkflow.failureEvent(),
@@ -1349,6 +1420,8 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             nextVariables.put(iterationKey, iterations + 1);
             return new LoopRoute(loop.stepNode(), nextVariables);
         }
+        // Reset on exit so a later entry (an outer loop, or a route back) gets its full iteration budget.
+        nextVariables.remove(iterationKey);
         return new LoopRoute(loop.nextNode(), nextVariables);
     }
 
@@ -1361,13 +1434,13 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         if (definition == null || snapshot.status() != WorkflowStatus.RUNNING) {
             return;
         }
-        ensureEventLoopStarted();
         WorkflowNode node = definition.nodes().get(snapshot.state());
-        if (node == null || node.timeout() == null || node.timeout().targetNode() == null || node.timeout().targetNode().isBlank()) {
+        if (node == null || node.timeout() == null || (!hasTimeoutTarget(node.timeout().targetNode())
+                && node.timeout().emittedEvent() == null)) {
             return;
         }
         boolean alreadyPending = timers.stream().anyMatch(timer ->
-                timer.status() == WorkflowTimerStatus.PENDING
+                isActive(timer)
                         && timer.workflowInstanceId().equals(snapshot.instanceId())
                         && timer.stepName().equals(snapshot.state()));
         if (alreadyPending) {
@@ -1383,6 +1456,11 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 "PENDING");
         timers.add(timer);
         persistTimer(timer);
+        ensureEventLoopStarted();
+    }
+
+    private static boolean hasTimeoutTarget(String targetNode) {
+        return targetNode != null && !targetNode.isBlank();
     }
 
     private static String forkExecutionKey(String forkNode) {
@@ -1390,7 +1468,6 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     }
 
     private void scheduleRetry(WorkflowSnapshot snapshot, WorkflowNode node, Duration backoff, int nextAttempt) {
-        ensureEventLoopStarted();
         WorkflowTimer timer = new WorkflowTimer(
                 null,
                 snapshot.instanceId(),
@@ -1401,6 +1478,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 "PENDING");
         timers.add(timer);
         persistTimer(timer);
+        ensureEventLoopStarted();
         eventPublisher.publish(simpleLifecycleEvent("retry.scheduled", snapshot,
                 Map.of("step", node.name(), TEXT_ATTEMPT, Integer.toString(nextAttempt))));
     }
@@ -1409,14 +1487,23 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         cancelPendingTimers(instanceId, null);
     }
 
+    /**
+     * Durable timers may also be claimed by a poller or waiting to retry; they still belong to their step.
+     */
+    private static boolean isActive(WorkflowTimer timer) {
+        return timer.status() == WorkflowTimerStatus.PENDING
+                || timer.status() == WorkflowTimerStatus.CLAIMED
+                || timer.status() == WorkflowTimerStatus.RETRY_SCHEDULED;
+    }
+
     private void cancelPendingTimers(WorkflowInstanceId instanceId, String stepName) {
         for (WorkflowTimer timer : List.copyOf(timers)) {
-            if (timer.status() == WorkflowTimerStatus.PENDING
+            if (isActive(timer)
                     && timer.workflowInstanceId().equals(instanceId)
                     && (stepName == null || timer.stepName().equals(stepName))) {
                 timers.remove(timer);
                 WorkflowTimer canceled = timer.canceled();
-                timers.add(canceled);
+                retainFinishedTimer(canceled);
                 persistTimer(canceled);
             }
         }
@@ -1451,14 +1538,18 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
 
     private boolean acceptsEvent(WorkflowSnapshot snapshot, WorkflowEvent event) {
         WorkflowDefinition definition = findDefinition(snapshot);
-        if (definition == null) {
-            return false;
-        }
+        return definition != null && acceptsEvent(definition, snapshot, event.eventName().value());
+    }
+
+    /**
+     * The single event-acceptance rule shared by the in-memory engine and {@link WorkflowStateMachine#accepts}, so a
+     * workflow accepts the same events whichever backend runs it.
+     */
+    static boolean acceptsEvent(WorkflowDefinition definition, WorkflowSnapshot snapshot, String eventName) {
         WorkflowNode node = definition.nodes().get(snapshot.state());
         if (node == null) {
             return false;
         }
-        String eventName = event.eventName().value();
         if (node.type() == WorkflowNodeType.WAIT) {
             return node.waitDefinition().eventName().value().equals(eventName);
         }
@@ -1551,14 +1642,12 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     }
 
     private static boolean isStepSuccessEvent(WorkflowNode node, String eventType) {
-        for (WorkflowTransition transition : node.transitions()) {
-            if (TEXT_SUCCESS.equals(transition.name())
-                    && transition.emittedEvent() != null
-                    && transition.emittedEvent().value().equals(eventType)) {
-                return true;
-            }
+        // The same transition a successful step takes: one named "success", else the first unnamed transition.
+        WorkflowTransition success = selectStepTransition(node, TEXT_SUCCESS);
+        if (success != null && success.emittedEvent() != null && success.emittedEvent().value().equals(eventType)) {
+            return true;
         }
-        return successEventName(node.action()).equals(eventType);
+        return node.action() != null && successEventName(node.action()).equals(eventType);
     }
 
     private static String successEventName(String action) {
@@ -1666,7 +1755,53 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 clock.instant());
         instances.put(snapshot.instanceId(), updated);
         persistSnapshot(updated);
+        recordFinished(snapshot, updated);
         return updated;
+    }
+
+    /**
+     * Only a transition calculator needs fired and canceled timers, which it returns as data; the long-running
+     * engine drops them so its timer list holds active timers only.
+     */
+    private void retainFinishedTimer(WorkflowTimer timer) {
+        if (!backgroundEventLoop) {
+            timers.add(timer);
+        }
+    }
+
+    private static boolean isFinished(WorkflowSnapshot snapshot) {
+        return snapshot != null
+                && (snapshot.status() == WorkflowStatus.COMPLETED || snapshot.status() == WorkflowStatus.CANCELED);
+    }
+
+    private void recordFinished(WorkflowSnapshot before, WorkflowSnapshot after) {
+        if (!backgroundEventLoop || isFinished(before) || !isFinished(after)) {
+            return;
+        }
+        finishedInstances.add(after.instanceId());
+        finishedCount.incrementAndGet();
+        while (finishedCount.get() > MAX_RETAINED_FINISHED_INSTANCES) {
+            WorkflowInstanceId oldest = finishedInstances.poll();
+            if (oldest == null) {
+                break;
+            }
+            finishedCount.decrementAndGet();
+            evictFinished(oldest);
+        }
+    }
+
+    private void evictFinished(WorkflowInstanceId instanceId) {
+        WorkflowSnapshot snapshot = instances.get(instanceId);
+        if (!isFinished(snapshot)) {
+            return;
+        }
+        instances.remove(instanceId);
+        instancesByBusinessKey.remove(instanceKey(snapshot.workflowKey(), snapshot.businessKey()), instanceId);
+        instanceLocks.remove(instanceId);
+        java.util.Set<String> keys = resultKeysByInstance.remove(instanceId);
+        if (keys != null) {
+            keys.forEach(idempotentResults::remove);
+        }
     }
 
     private static Map<String, Object> merge(Map<String, Object> original, Map<String, Object> updates) {
@@ -1801,7 +1936,13 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
 
     private void remember(String commandType, IdempotencyFingerprint fingerprint, Object result) {
         if (fingerprint != null) {
-            idempotentResults.putIfAbsent(commandType + ":" + fingerprint.idempotencyKey(), new IdempotentResult(fingerprint, result));
+            String key = commandType + ":" + fingerprint.idempotencyKey();
+            idempotentResults.putIfAbsent(key, new IdempotentResult(fingerprint, result));
+            WorkflowInstanceId owner = result instanceof StartWorkflowResult start ? start.workflowInstanceId()
+                    : result instanceof WorkflowCommandResult command ? command.workflowInstanceId() : null;
+            if (owner != null) {
+                resultKeysByInstance.computeIfAbsent(owner, ignored -> ConcurrentHashMap.newKeySet()).add(key);
+            }
         }
     }
 
@@ -1813,11 +1954,13 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         if (fingerprint == null) {
             return operation.get();
         }
-        Object lock = idempotencyLocks.computeIfAbsent(
-                commandType + ":" + fingerprint.idempotencyKey(),
-                ignored -> new Object());
+        String key = commandType + ":" + fingerprint.idempotencyKey();
+        Object lock = idempotencyLocks.computeIfAbsent(key, ignored -> new Object());
         synchronized (lock) {
-            return operation.get();
+            T result = operation.get();
+            // The result is now remembered, so later callers see it as a repeat; the lock is no longer needed.
+            idempotencyLocks.remove(key, lock);
+            return result;
         }
     }
 

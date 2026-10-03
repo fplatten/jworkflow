@@ -1,4 +1,6 @@
-docs/
+# Internal planning notes, audits and issue exports stay local. Curated user guides under docs/guide/ are tracked.
+docs/*
+!docs/guide/
 
 # Maven build output
 target/

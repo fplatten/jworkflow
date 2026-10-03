@@ -32,4 +32,12 @@
         <sqlFile path="db/migration/V6__lease_generation_fencing.sql"
                  relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
     </changeSet>
+    <changeSet id="007-fixed-width-timestamps" author="org.jworkflow">
+        <sqlFile path="db/migration/V7__fixed_width_timestamps.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
+    <changeSet id="008-timer-instance-index" author="org.jworkflow">
+        <sqlFile path="db/migration/V8__timer_instance_index.sql"
+                 relativeToChangelogFile="false" splitStatements="true" stripComments="true"/>
+    </changeSet>
 </databaseChangeLog>

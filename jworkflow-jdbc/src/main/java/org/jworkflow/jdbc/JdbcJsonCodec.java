@@ -10,6 +10,8 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.jworkflow.persistence.PersistenceSerializationException;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
@@ -36,6 +38,9 @@ public final class JdbcJsonCodec {
      * Current persisted JSON envelope version.
      */
     public static final int VERSION = 1;
+    /** Envelope version used when the value contains typed numbers. */
+    public static final int TYPED_NUMBERS_VERSION = 2;
+    private static final String NUMBER_TAG = "@jworkflow.number";
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
     private final ObjectMapper mapper;
 
@@ -58,11 +63,14 @@ public final class JdbcJsonCodec {
      * @return the resulting text
      */
     public String write(Object value) {
-        Object safe = validateAndCopy(value, "$", true);
+        boolean[] tagged = {false};
+        Object safe = validateAndCopy(value, "$", true, tagged);
         LinkedHashMap<String, Object> envelope = new LinkedHashMap<>();
         envelope.put(TEXT_FORMAT, FORMAT);
         envelope.put(TEXT_VALUE, safe);
-        envelope.put("version", VERSION);
+        // Version 2 only when typed numbers are present, so untyped data stays readable by older releases and
+        // older releases reject (rather than misread) tagged data.
+        envelope.put("version", tagged[0] ? TYPED_NUMBERS_VERSION : VERSION);
         try {
             return mapper.writeValueAsString(envelope);
         } catch (JsonProcessingException exception) {
@@ -86,7 +94,7 @@ public final class JdbcJsonCodec {
      */
     public Object read(String json) {
         Map<String, Object> envelope = parseEnvelope(json);
-        return immutableJson(envelope.get(TEXT_VALUE));
+        return immutableJson(decodeNumbers(envelope));
     }
 
     /**
@@ -133,7 +141,7 @@ public final class JdbcJsonCodec {
      * @return the value produced by the work
      */
     public <T> T read(String json, Class<T> type) {
-        Object value = parseEnvelope(json).get(TEXT_VALUE);
+        Object value = decodeNumbers(parseEnvelope(json));
         try {
             return mapper.convertValue(value, type);
         } catch (IllegalArgumentException exception) {
@@ -158,7 +166,7 @@ public final class JdbcJsonCodec {
                 throw new PersistenceSerializationException("Unsupported persisted JSON format");
             }
             Object version = envelope.get("version");
-            if (!(version instanceof Number number) || number.intValue() != VERSION) {
+            if (!(version instanceof Number number) || (number.intValue() != VERSION && number.intValue() != TYPED_NUMBERS_VERSION)) {
                 throw new PersistenceSerializationException("Unsupported persisted JSON version: " + version);
             }
             if (!envelope.containsKey(TEXT_VALUE)) throw new PersistenceSerializationException("Persisted JSON value is missing");
@@ -168,7 +176,15 @@ public final class JdbcJsonCodec {
         }
     }
 
-    private Object validateAndCopy(Object value, String path, boolean allowTemporal) {
+    private Object validateAndCopy(Object value, String path, boolean allowTemporal, boolean[] tagged) {
+        String numberType = typedNumber(value);
+        if (numberType != null) {
+            tagged[0] = true;
+            LinkedHashMap<String, Object> tag = new LinkedHashMap<>();
+            tag.put(NUMBER_TAG, numberType);
+            tag.put(TEXT_VALUE, value instanceof BigDecimal decimal ? decimal.toString() : value.toString());
+            return tag;
+        }
         if (isJsonScalar(value)) return value;
         if (allowTemporal && value instanceof TemporalAccessor) return value;
         if (value instanceof byte[]) {
@@ -182,15 +198,73 @@ public final class JdbcJsonCodec {
             }
             Collections.sort(keys);
             LinkedHashMap<String, Object> result = new LinkedHashMap<>();
-            for (String key : keys) result.put(key, validateAndCopy(map.get(key), path + "." + key, false));
+            if (isNumberTag(map)) {
+                throw new PersistenceSerializationException("Map at " + path + " uses the reserved typed-number shape");
+            }
+            for (String key : keys) result.put(key, validateAndCopy(map.get(key), path + "." + key, false, tagged));
             return result;
         }
         if (value instanceof List<?> list) {
             ArrayList<Object> result = new ArrayList<>(list.size());
-            for (int index = 0; index < list.size(); index++) result.add(validateAndCopy(list.get(index), path + "[" + index + "]", false));
+            for (int index = 0; index < list.size(); index++) result.add(validateAndCopy(list.get(index), path + "[" + index + "]", false, tagged));
             return result;
         }
         throw new PersistenceSerializationException("Unsupported persisted value at " + path + ": " + value.getClass().getName());
+    }
+
+    /**
+     * JSON keeps Integer and Double exactly, but reads Long values that fit an int back as Integer, BigDecimal as
+     * Double (losing precision) and Float, Short, Byte and small BigInteger values as other types. Those are stored
+     * as a tagged object holding the exact text.
+     */
+    private static String typedNumber(Object value) {
+        if (value instanceof Long) return "long";
+        if (value instanceof BigDecimal) return "decimal";
+        if (value instanceof BigInteger) return "biginteger";
+        if (value instanceof Float) return "float";
+        if (value instanceof Short) return "short";
+        if (value instanceof Byte) return "byte";
+        return null;
+    }
+
+    private static boolean isNumberTag(Map<?, ?> map) {
+        return map.size() == 2 && map.get(NUMBER_TAG) instanceof String && map.get(TEXT_VALUE) instanceof String;
+    }
+
+    private Object decodeNumbers(Map<String, Object> envelope) {
+        Object value = envelope.get(TEXT_VALUE);
+        return ((Number) envelope.get("version")).intValue() == TYPED_NUMBERS_VERSION ? decodeNumbers(value) : value;
+    }
+
+    private static Object decodeNumbers(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            if (isNumberTag(map)) return decodeNumber((String) map.get(NUMBER_TAG), (String) map.get(TEXT_VALUE));
+            LinkedHashMap<String, Object> result = new LinkedHashMap<>();
+            map.forEach((key, item) -> result.put(String.valueOf(key), decodeNumbers(item)));
+            return result;
+        }
+        if (value instanceof List<?> list) {
+            ArrayList<Object> result = new ArrayList<>(list.size());
+            list.forEach(item -> result.add(decodeNumbers(item)));
+            return result;
+        }
+        return value;
+    }
+
+    private static Number decodeNumber(String type, String text) {
+        try {
+            return switch (type) {
+                case "long" -> Long.valueOf(text);
+                case "decimal" -> new BigDecimal(text);
+                case "biginteger" -> new BigInteger(text);
+                case "float" -> Float.valueOf(text);
+                case "short" -> Short.valueOf(text);
+                case "byte" -> Byte.valueOf(text);
+                default -> throw new PersistenceSerializationException("Unsupported persisted number type: " + type);
+            };
+        } catch (NumberFormatException exception) {
+            throw new PersistenceSerializationException("Invalid persisted " + type + " value", exception);
+        }
     }
 
     private static boolean isJsonScalar(Object value) {

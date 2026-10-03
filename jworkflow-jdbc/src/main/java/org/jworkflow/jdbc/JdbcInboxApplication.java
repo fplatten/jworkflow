@@ -76,7 +76,17 @@ public final class JdbcInboxApplication implements AutoCloseable {
         Instant now=clock.instant();
         persistence.transactions().execute(()->persistence.inbox().releaseExpiredClaims(now));
         List<InboxMessage> claimed=persistence.jdbcTransactions().inWriteTransaction(()->persistence.inbox().claimEligibleFenced(now,workerId,now.plus(lease),batchSize));
-        for(InboxMessage message:claimed)process(message);
+        RuntimeException first=null;
+        for(InboxMessage message:claimed){
+            // One failing message must not strand the rest of the batch until its leases expire.
+            if(reconciliationRequired.get())break;
+            try{process(message);}
+            catch(RuntimeException failure){
+                if(first==null)first=failure;else first.addSuppressed(failure);
+                JdbcWorkerDiagnostics.itemFailed("inbox",failure);
+            }
+        }
+        if(first!=null)throw first;
         return claimed.size();
     }
     /**
@@ -98,17 +108,22 @@ public final class JdbcInboxApplication implements AutoCloseable {
     });
         poller.scheduleWithFixedDelay(this::pollSafely,pollInterval.toMillis(),pollInterval.toMillis(),TimeUnit.MILLISECONDS);
     }
-    private void pollSafely(){if(closed.get())return;
+    private void pollSafely(){if(closed.get()||reconciliationRequired.get())return;
+        // Any escaping Throwable would silently cancel the schedule; durable claims stay retryable on the next poll.
         try{pollOnce();
-    }catch(RuntimeException ignored){
-            // Durable claims remain retryable; the next scheduled poll will try again.
+    }catch(Throwable failure){JdbcWorkerDiagnostics.pollFailed("inbox",failure);
         }}
     private void process(InboxMessage message){try{
-        persistence.jdbcTransactions().inWriteTransaction(() -> processing.process(message,workerId));
+        InboxProcessingResult result=persistence.jdbcTransactions().inWriteTransaction(() -> processing.process(message,workerId));
+        if(InboxProcessingService.partiallyRouted(result)){
+            // Delivered targets are committed and idempotent; retry the message for the targets that failed.
+            finalizeFailure(message,new InvalidWorkflowRouteException(WorkflowRoutingOutcome.PARTIAL_FAILURE,"Fan-out failed for some targets"));
+        }
     }catch(RuntimeException failure){
         try{finalizeFailure(message,failure);}
         catch(RuntimeException finalizationFailure){
-            if(JdbcTransactionException.requiresReconciliation(failure))reconciliationRequired.set(true);
+            if(JdbcTransactionException.requiresReconciliation(failure)&&reconciliationRequired.compareAndSet(false,true))
+                JdbcWorkerDiagnostics.paused("inbox",failure);
             failure.addSuppressed(finalizationFailure);throw failure;
         }
     }}
@@ -130,7 +145,8 @@ public final class JdbcInboxApplication implements AutoCloseable {
     private Object dispatch(Command command){if(command instanceof StartWorkflowCommand c)return engine.start(c);
         if(command instanceof SignalWorkflowCommand c)return engine.signal(c);
         if(command instanceof RouteWorkflowEventCommand c){var result=engine.route(c.event(),c.route());
-        if(result.outcome()!=WorkflowRoutingOutcome.ROUTED)throw new InvalidWorkflowRouteException(result.outcome(),result.detail());
+        // A partial fan-out is returned so the successful deliveries commit; process() then schedules a retry.
+        if(result.outcome()!=WorkflowRoutingOutcome.ROUTED&&result.outcome()!=WorkflowRoutingOutcome.PARTIAL_FAILURE)throw new InvalidWorkflowRouteException(result.outcome(),result.detail());
         return result;
     }
     if(command instanceof RetryFailedStepCommand c) {
@@ -160,7 +176,8 @@ public final class JdbcInboxApplication implements AutoCloseable {
     public List<InboxAttempt> attempts(UUID id){return persistence.inbox().findAttempts(id);
     }
     private InboxMessage capture(InboxMessage message){WorkflowEvent filtered=engine.capture(new WorkflowEvent(new EventMetadata(null,new EventName("inbox.received"),message.sourceSystem(),message.correlationId(),message.causationId(),null,null,null,null,"1",message.receivedAt(),message.receivedAt(),Map.of()),message.message()));
-        return new InboxMessage(message.messageId(),message.externalEventId(),message.sourceSystem(),filtered.message(),filtered.metadata().correlationId(),filtered.metadata().causationId(),message.receivedAt(),message.processedAt(),message.status(),message.attemptCount(),message.nextAttemptAt(),message.lastError(),message.claimedBy(),message.claimUntil(),message.claimToken());
+        // Accepted messages always start as RECEIVED; producer-supplied status, attempts and claims are ignored.
+        return new InboxMessage(message.messageId(),message.externalEventId(),message.sourceSystem(),filtered.message(),filtered.metadata().correlationId(),filtered.metadata().causationId(),message.receivedAt(),null,InboxMessageStatus.RECEIVED,0,null,null,null,null,null);
     }
     /**
      * {@inheritDoc}

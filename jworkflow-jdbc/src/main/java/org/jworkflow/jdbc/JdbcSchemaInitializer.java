@@ -19,7 +19,7 @@ import java.util.List;
 /**
  * Applies the same ordered SQL resources exposed to Flyway and Liquibase.
  *
- * <p>These resources are SQLite V1 through V6. Existing V1 through V5 identities/checksums remain immutable.
+ * <p>These resources are SQLite V1 through V8. Existing V1 through V7 identities/checksums remain immutable.
  * PostgreSQL uses its separate initializer and resource tree. Stop older workers before deploying the additive
  * lease-token schema.</p>
  */
@@ -30,7 +30,9 @@ final class JdbcSchemaInitializer {
             new Migration(3, "timer attempt history", "db/migration/V3__timer_attempt_history.sql"),
             new Migration(4, "event routing indexes", "db/migration/V4__event_routing_indexes.sql"),
             new Migration(5, "message redaction status", "db/migration/V5__message_redaction_status.sql"),
-            new Migration(6, "lease generation fencing", "db/migration/V6__lease_generation_fencing.sql"));
+            new Migration(6, "lease generation fencing", "db/migration/V6__lease_generation_fencing.sql"),
+            new Migration(7, "fixed width timestamps", "db/migration/V7__fixed_width_timestamps.sql"),
+            new Migration(8, "timer instance index", "db/migration/V8__timer_instance_index.sql"));
 
     private JdbcSchemaInitializer() { }
 

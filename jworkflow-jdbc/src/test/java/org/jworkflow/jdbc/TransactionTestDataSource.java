@@ -15,6 +15,8 @@ final class TransactionTestDataSource implements DataSource {
     SQLException commitFailure, rollbackFailure, closeFailure, restoreFailure;
     boolean commitBeforeFailure;
     String failAfterSql;
+    /** Runs after each prepared update with its SQL, on the executing thread; lets tests hold row locks open. */
+    volatile java.util.function.Consumer<String> afterUpdate;
 
     TransactionTestDataSource(DataSource delegate) { this.delegate = delegate; }
 
@@ -50,6 +52,8 @@ final class TransactionTestDataSource implements DataSource {
                     Object value = invoke(statement, m, a);
                     if (m.getName().equals("executeUpdate") && failAfterSql != null && sql.contains(failAfterSql))
                         throw new SQLException("Injected write failure", "XX000");
+                    java.util.function.Consumer<String> hook = afterUpdate;
+                    if (m.getName().equals("executeUpdate") && hook != null) hook.accept(sql);
                     return value;
                 });
             }

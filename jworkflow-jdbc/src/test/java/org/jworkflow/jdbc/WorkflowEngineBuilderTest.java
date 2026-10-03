@@ -563,11 +563,10 @@ public final class WorkflowEngineBuilderTest {
                     correlateBy "customerId"
                     start when: "customer.created"
                     step("notify") {
-                        on "notification.requested"
+                        on "customer.created"
                         action "notification.send"
                         retry maxAttempts: 3, backoff: "PT1S"
-                        timeout "PT2S"
-                        sla "PT1S", onBreach: "warn"
+                        timeout "PT2S", emit: "notification.delayed"
                         run { event, context ->
                             context.listener("audit").record(["Ada", true, 2, null])
                         }
@@ -580,7 +579,7 @@ public final class WorkflowEngineBuilderTest {
                         timeout "PT5S", goTo: "failed"
                         then goTo: "route"
                     }
-                    gateway("route", type: "inclusive") {
+                    gateway("route", type: "exclusive") {
                         when predicate: "eligible", arguments: [minimum: 18, regions: ["US", "CA"]], goTo: "done"
                         otherwise goTo: "failed"
                     }
