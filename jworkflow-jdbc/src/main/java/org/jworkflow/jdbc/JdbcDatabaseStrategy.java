@@ -59,13 +59,13 @@ interface JdbcDatabaseStrategy {
      */
     default String claimBatchSql(JdbcLeaseSupport.Queue queue,String columns){return null;}
     /**
-     * Returns SQL invalidating expired queue leases and clearing their owners and acquisition tokens.
+     * Returns SQL applying the supplied assignments to expired queue leases.
      * @param queue fixed durable queue whose lease metadata is used
+     * @param assignments fixed SET clause; for timers it ends with one {@code updated_at=?} parameter
      * @return SQL invalidating expired queue leases and clearing their owners and acquisition tokens
      */
-    default String releaseClaimsSql(JdbcLeaseSupport.Queue queue){
-        return "update "+queue.table+" set status_value='RETRY_SCHEDULED',claimed_by=null,claim_until=null,claim_token=null"
-                +(queue.timer?",updated_at=?":"")+" where status_value='CLAIMED' and claim_until<=?";
+    default String releaseClaimsSql(JdbcLeaseSupport.Queue queue,String assignments){
+        return "update "+queue.table+" set "+assignments+" where status_value='CLAIMED' and claim_until<=?";
     }
     /**
      * Rejects owner-only completion when this backend requires acquisition-token fencing.

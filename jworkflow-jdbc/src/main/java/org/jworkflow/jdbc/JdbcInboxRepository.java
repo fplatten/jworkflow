@@ -19,6 +19,7 @@ final class JdbcInboxRepository implements InboxRepository {
     private static final String COLUMNS = "id,external_event_id,source_system,correlation_id,causation_id,received_at,processed_at,status_value,last_error_message,message_payload,message_payload_blob,message_content_type,message_schema_name,message_schema_version,message_metadata_json,message_redaction_status,attempt_count,next_attempt_at,claimed_by,claim_until,claim_token";
     private final JdbcConnectionFactory connections;
         private final JdbcEventMessageCodec messages=new JdbcEventMessageCodec();
+    private volatile int maxAttempts;
     JdbcInboxRepository(JdbcConnectionFactory connections){this.connections=connections;
     }
 
@@ -153,7 +154,12 @@ final class JdbcInboxRepository implements InboxRepository {
     /**
      * {@inheritDoc}
      */
-    @Override public int releaseExpiredClaims(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.INBOX,now);}
+    @Override public int releaseExpiredClaims(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.INBOX,now,maxAttempts);}
+    /**
+     * Sets the attempt budget applied when expired leases are released; zero only counts the attempt.
+     * @param value maximum attempts, or zero for no dead-letter limit
+     */
+    void maxAttempts(int value){maxAttempts=value;}
     /**
      * {@inheritDoc}
      */

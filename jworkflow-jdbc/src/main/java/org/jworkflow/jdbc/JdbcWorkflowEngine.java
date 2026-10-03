@@ -68,6 +68,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         this.type=Objects.requireNonNull(type);
             this.connections=Objects.requireNonNull(connections);
             this.persistence=JdbcWorkflowPersistence.from(connections);
+            persistence.configureLeaseAttemptLimits(settings);
         this.observer=Objects.requireNonNull(observer);
             this.listeners=new java.util.concurrent.ConcurrentHashMap<>(listeners==null?Map.of():listeners);
         this.lifecycleObserver=SafeWorkflowLifecycleObserver.isolate(Objects.requireNonNull(lifecycleObserver,"lifecycleObserver"));

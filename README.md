@@ -426,7 +426,7 @@ java -cp "jworkflow-example/target/classes;jworkflow-jdbc/target/classes;jworkfl
 - Same-instance concurrent JDBC writers are resolved with optimistic locking rather than JVM-wide synchronization.
 - Inbox deduplication and command idempotency protect repeated inputs within their documented identities.
 - External publication is at least once and requires consumer-side idempotency.
-- `SecureASTCustomizer` and the custom AST validator constrain the Groovy DSL, but they are not an operating-system sandbox.
+- The Groovy DSL is only parsed, never compiled or executed: annotations (and therefore AST transforms) are rejected and a deny-by-default AST validator interprets the source. This is not an operating-system sandbox; load definitions only from trusted locations.
 - The host application owns authentication, authorization, secret management, database backups, and transport security.
 
 ## License

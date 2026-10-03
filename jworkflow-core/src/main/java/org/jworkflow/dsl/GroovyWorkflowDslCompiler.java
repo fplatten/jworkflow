@@ -1,6 +1,8 @@
 package org.jworkflow.dsl;
 
 import org.codehaus.groovy.ast.ASTNode;
+import org.codehaus.groovy.ast.AnnotatedNode;
+import org.codehaus.groovy.ast.ClassCodeVisitorSupport;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.CodeVisitorSupport;
 import org.codehaus.groovy.ast.ModuleNode;
@@ -8,7 +10,6 @@ import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.expr.*;
 import org.codehaus.groovy.ast.stmt.*;
 import org.codehaus.groovy.control.*;
-import org.codehaus.groovy.control.customizers.SecureASTCustomizer;
 import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
 import org.codehaus.groovy.syntax.SyntaxException;
 import org.jworkflow.definition.WorkflowDefinitionText;
@@ -74,8 +75,8 @@ public final class GroovyWorkflowDslCompiler {
             throw limit(text.location(), null, "DSL source exceeds " + options.maxSourceCharacters() + " characters");
         ModuleNode module = parse(text.location(), text.content());
         validateEnvelope(module, text.location());
+        rejectAnnotations(module, text.location());
         enforceAstLimit(module, text.location());
-        secureCompile(text.location(), text.content());
         List<MethodCallExpression> root = calls(module.getStatementBlock(), text.location(), "script", 0);
         if (root.size() != 1 || !TEXT_WORKFLOW.equals(root.get(0).getMethodAsString()))
             throw grammar(text.location(), root.isEmpty() ? module : root.get(0),
@@ -464,22 +465,21 @@ public final class GroovyWorkflowDslCompiler {
         }
     }
 
-    private void secureCompile(String source, String content) {
-        SecureASTCustomizer secure = new SecureASTCustomizer();
-        secure.setPackageAllowed(false);
-            secure.setMethodDefinitionAllowed(false);
-            secure.setClosuresAllowed(true);
-        secure.setAllowedImports(List.of());
-            secure.setAllowedStaticImports(List.of());
-        secure.setAllowedStarImports(List.of());
-            secure.setAllowedStaticStarImports(List.of());
-        CompilerConfiguration configuration = new CompilerConfiguration();
-        configuration.addCompilationCustomizers(secure);
-        CompilationUnit unit = new CompilationUnit(configuration);
-            unit.addSource(source, content);
-        try { unit.compile(Phases.CANONICALIZATION);
-        }
-        catch (Exception e) { throw failure("dsl.secure-compiler", DslDiagnosticCategory.SECURITY, source, null, "compiler", safe(e));
+    /**
+     * Rejects every source annotation before any Groovy phase that could run AST transforms. Sources are only parsed
+     * to CONVERSION and then interpreted, so annotations such as {@code @ASTTest} or {@code @Grab} must never reach a
+     * compiler that applies transforms.
+     */
+    private void rejectAnnotations(ModuleNode module, String source) {
+        for (ClassNode type : module.getClasses()) {
+            new ClassCodeVisitorSupport() {
+                @Override protected SourceUnit getSourceUnit() { return module.getContext();
+                }
+                @Override public void visitAnnotations(AnnotatedNode node) {
+                    if (node.getAnnotations().stream().anyMatch(a -> a.getLineNumber() > 0))
+                        throw security(source, node, "Annotations and AST transforms are not allowed");
+                }
+            }.visitClass(type);
         }
     }
 

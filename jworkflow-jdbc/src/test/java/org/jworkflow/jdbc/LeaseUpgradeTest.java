@@ -30,13 +30,13 @@ class LeaseUpgradeTest {
                     insert.setInt(1,version);insert.setString(2,names.get(version-1).replace('_',' '));insert.setString(3,checksum);insert.setString(4,NOW.toString());insert.executeUpdate();
                 }
             }
-            try(PreparedStatement insert=connection.prepareStatement("insert into workflow_timer(id,workflow_instance_id,timer_type,step_name,target_node,due_at,next_attempt_at,status_value,created_at,updated_at,claimed_by,claim_until,attempt_count) values(?,?,'STEP_TIMEOUT','waiting','done',?,?,'CLAIMED',?,?,'old-worker',?,4)")){
+            try(PreparedStatement insert=connection.prepareStatement("insert into workflow_timer(id,workflow_instance_id,timer_type,step_name,target_node,due_at,next_attempt_at,status_value,created_at,updated_at,claimed_by,claim_until,attempt_count) values(?,?,'STEP_TIMEOUT','waiting','done',?,?,'CLAIMED',?,?,'old-worker',?,3)")){
                 insert.setString(1,id.toString());insert.setString(2,instance.toString());for(int i=3;i<=6;i++)insert.setString(i,NOW.toString());insert.setString(7,NOW.plusSeconds(10).toString());insert.executeUpdate();
             }
-            try(PreparedStatement insert=connection.prepareStatement("insert into workflow_inbox(id,external_event_id,source_system,received_at,status_value,message_payload,message_metadata_json,message_content_type,message_redaction_status,claimed_by,claim_until,attempt_count) values(?,'external','source',?,'CLAIMED',?,?,'application/json','REDACTED','old-worker',?,4)")){
+            try(PreparedStatement insert=connection.prepareStatement("insert into workflow_inbox(id,external_event_id,source_system,received_at,status_value,message_payload,message_metadata_json,message_content_type,message_redaction_status,claimed_by,claim_until,attempt_count) values(?,'external','source',?,'CLAIMED',?,?,'application/json','REDACTED','old-worker',?,3)")){
                 insert.setString(1,id.toString());insert.setString(2,NOW.toString());insert.setString(3,new JdbcJsonCodec().write(Map.of("text","雪","nested",List.of(1,true))));insert.setString(4,new JdbcJsonCodec().write(Map.of("retained","yes")));insert.setString(5,NOW.plusSeconds(10).toString());insert.executeUpdate();
             }
-            try(PreparedStatement insert=connection.prepareStatement("insert into workflow_outbox(id,event_id,destination,idempotency_key,created_at,status_value,message_payload_blob,message_content_type,message_metadata_json,claimed_by,claim_until,attempt_count) values(?,?,'destination','key',?,'CLAIMED',?,'application/octet-stream',?,'old-worker',?,4)")){
+            try(PreparedStatement insert=connection.prepareStatement("insert into workflow_outbox(id,event_id,destination,idempotency_key,created_at,status_value,message_payload_blob,message_content_type,message_metadata_json,claimed_by,claim_until,attempt_count) values(?,?,'destination','key',?,'CLAIMED',?,'application/octet-stream',?,'old-worker',?,3)")){
                 insert.setString(1,id.toString());insert.setString(2,UUID.randomUUID().toString());insert.setString(3,NOW.toString());insert.setBytes(4,binary);insert.setString(5,new JdbcJsonCodec().write(Map.of("retained","yes")));insert.setString(6,NOW.plusSeconds(10).toString());insert.executeUpdate();
             }
             for(String table:List.of("workflow_timer","workflow_inbox","workflow_outbox")){
@@ -49,7 +49,7 @@ class LeaseUpgradeTest {
             var p=JdbcWorkflowPersistence.from(engine.connectionFactory());assertEquals(6,TransactionNotificationContract.count(source,"jworkflow_schema_history"));
             var inbox=p.inbox().findById(id).orElseThrow();assertEquals(Map.of("text","雪","nested",List.of(1,true)),inbox.message().payload());assertTrue(inbox.message().redacted());assertEquals(Map.of("retained","yes"),inbox.message().attributes());
             assertArrayEquals(binary,(byte[])p.outbox().findById(id).orElseThrow().message().payload());
-            assertEquals(4,inbox.attemptCount());assertNull(inbox.claimToken());assertEquals("old-worker",inbox.claimedBy());
+            assertEquals(3,inbox.attemptCount());assertNull(inbox.claimToken());assertEquals("old-worker",inbox.claimedBy());
             for(Kind kind:Kind.values())assertTrue(acquire(p,kind,NOW.plusSeconds(9),"worker",NOW.plusSeconds(20),1).isEmpty());
             try(Connection connection=source.getConnection();Statement statement=connection.createStatement();ResultSet rows=statement.executeQuery("select version,checksum from jworkflow_schema_history where version<=5 order by version")){
                 Map<Integer,String> actual=new LinkedHashMap<>();while(rows.next())actual.put(rows.getInt(1),rows.getString(2));assertEquals(original,actual);

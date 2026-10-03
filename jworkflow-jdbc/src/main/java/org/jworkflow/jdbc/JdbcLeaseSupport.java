@@ -41,7 +41,23 @@ final class JdbcLeaseSupport {
          * @throws SQLException if the database operation fails
          */
         T map(ResultSet rows)throws SQLException;}
+    /** Message recorded when a lease expires before its owner finished the work. */
+    static final String LEASE_EXPIRED_ERROR="Lease expired before processing completed";
+    /** Counts the abandoned attempt when an expired lease is acquired directly instead of being released first. */
+    static final String EXPIRED_RECLAIM_INCREMENT="(case when status_value='CLAIMED' then 1 else 0 end)";
     private JdbcLeaseSupport(){ }
+
+    /**
+     * Reads a queue's maximum attempts using the same key, default and bounds as its application worker.
+     * @param settings adapter settings
+     * @param key setting key, such as {@code inbox.max-attempts}
+     * @return the configured maximum attempts
+     */
+    static int maxAttempts(Map<String,String> settings,String key){
+        long value=Long.parseLong((settings==null?Map.<String,String>of():settings).getOrDefault(key,"5"));
+        if(value<1||value>100)throw new IllegalArgumentException(key+" must be between 1 and 100");
+        return (int)value;
+    }
 
     static <T> List<T> claim(JdbcConnectionFactory factory,Queue queue,String columns,Mapper<T> mapper,Instant now,String owner,Instant until,int limit){
         factory.requireWriteTransaction("Lease acquisition");
@@ -62,7 +78,8 @@ final class JdbcLeaseSupport {
             }
             List<T> result=new ArrayList<>();
             for(String id:ids){
-                String sql="update "+queue.table+" set status_value='CLAIMED',claimed_by=?,claim_until=?,claim_token=?"+(queue.timer?",updated_at=?":"")+" where id=?";
+                String sql="update "+queue.table+" set status_value='CLAIMED',attempt_count=attempt_count+"+EXPIRED_RECLAIM_INCREMENT
+                        +",claimed_by=?,claim_until=?,claim_token=?"+(queue.timer?",updated_at=?":"")+" where id=?";
                 try(PreparedStatement statement=connection.prepareStatement(sql)){
                     statement.setString(1,owner);strategy.bindInstant(statement,2,until);statement.setString(3,UUID.randomUUID().toString());
                     int index=4;if(queue.timer)strategy.bindInstant(statement,index++,now);statement.setString(index,id);
@@ -95,8 +112,20 @@ final class JdbcLeaseSupport {
             if(statement.executeUpdate()!=1)throw stale(factory);
         }catch(SQLException failure){throw new WorkflowInfrastructureException("Failed fenced lease transition",failure);}
     }
-    static int release(JdbcConnectionFactory factory,Queue queue,Instant now){
-        try(Connection connection=factory.open();PreparedStatement statement=connection.prepareStatement(factory.strategy().releaseClaimsSql(queue))){
+    /**
+     * Releases expired leases, counting each as a failed attempt. With a positive {@code maxAttempts}, a lease whose
+     * attempt exhausts the budget is dead-lettered instead of rescheduled, so work that repeatedly crashes or hangs
+     * its worker cannot be redelivered forever.
+     */
+    static int release(JdbcConnectionFactory factory,Queue queue,Instant now,int maxAttempts){
+        String exhausted="attempt_count+1>="+maxAttempts;
+        String status=maxAttempts>0?"case when "+exhausted+" then 'DEAD_LETTER' else 'RETRY_SCHEDULED' end":"'RETRY_SCHEDULED'";
+        String assignments="status_value="+status
+                +(maxAttempts>0?",dead_lettered_at=case when "+exhausted+" then claim_until else dead_lettered_at end":"")
+                +(queue==Queue.OUTBOX?",retry_count=retry_count+1":"")
+                +",attempt_count=attempt_count+1,last_error_message='"+LEASE_EXPIRED_ERROR+"'"
+                +",claimed_by=null,claim_until=null,claim_token=null"+(queue.timer?",updated_at=?":"");
+        try(Connection connection=factory.open();PreparedStatement statement=connection.prepareStatement(factory.strategy().releaseClaimsSql(queue,assignments))){
             factory.strategy().bindInstant(statement,1,now);
             if(queue.timer)factory.strategy().bindInstant(statement,2,now);
             return statement.executeUpdate();

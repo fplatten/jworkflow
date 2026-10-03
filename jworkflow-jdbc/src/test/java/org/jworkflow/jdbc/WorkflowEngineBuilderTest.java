@@ -454,7 +454,10 @@ public final class WorkflowEngineBuilderTest {
                 "for (item in [1]) { System.setProperty(\"" + sentinel + "\", \"changed\") }",
                 "try { throw new RuntimeException() } catch (Exception ignored) { }",
                 "return",
-                "unknownDslMethod \"ignored\"");
+                "unknownDslMethod \"ignored\"",
+                "@groovy.transform.ASTTest(value={ System.setProperty(\"" + sentinel + "\", \"changed\") }) def x = 1",
+                "step(\"annotated\") { @groovy.transform.ASTTest(value={ System.setProperty(\"" + sentinel
+                        + "\", \"changed\") }) def x = 1 }");
 
         for (String body : maliciousBodies) {
             String source = """
@@ -479,6 +482,28 @@ public final class WorkflowEngineBuilderTest {
                 class Escape { static void run() { System.exit(0) } }
                 workflow("class") { version "1"; start at: "done"; end("done") }
                 """, "class.groovy");
+        assertDslRejected("""
+                @groovy.transform.ASTTest(value={ System.setProperty("%s", "changed") })
+                def x = 1
+                workflow("annotated") { version "1"; start at: "done"; end("done") }
+                """.formatted(sentinel), "annotated.groovy");
+        assertDslRejected("""
+                workflow("annotated-listener") {
+                    version "1"
+                    start at: "step"
+                    step("step") {
+                        run { event, context ->
+                            @groovy.transform.ASTTest(value={ System.setProperty("%s", "changed") })
+                            def x = context.listener("listener").onEvent(event)
+                        }
+                        then end("done")
+                    }
+                    end("done")
+                }
+                """.formatted(sentinel), "annotated-listener.groovy");
+        if (System.getProperty(sentinel) != null) {
+            throw new AssertionError("Annotated Groovy source was executed during compilation");
+        }
         assertDslRejected("""
                 workflow("first") { version "1"; start at: "done"; end("done") }
                 workflow("second") { version "1"; start at: "done"; end("done") }

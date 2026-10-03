@@ -31,18 +31,18 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
     @Override public String claimBatchSql(JdbcLeaseSupport.Queue queue,String columns){
         return "with candidates as (select id from "+queue.table+" where "+queue.eligible()
                 +" order by "+queue.order+" limit ? for update skip locked), acquired as (update "+queue.table
-                +" q set status_value='CLAIMED',claimed_by=?,claim_until=?,claim_token=gen_random_uuid()::text"
+                +" q set status_value='CLAIMED',attempt_count=q.attempt_count+"+JdbcLeaseSupport.EXPIRED_RECLAIM_INCREMENT
+                +",claimed_by=?,claim_until=?,claim_token=gen_random_uuid()::text"
                 +(queue.timer?",updated_at=?":"")+" from candidates c where q.id=c.id returning q.*) select "+columns
                 +" from acquired order by "+queue.order;
     }
     /**
      * {@inheritDoc}
      */
-    @Override public String releaseClaimsSql(JdbcLeaseSupport.Queue queue){
+    @Override public String releaseClaimsSql(JdbcLeaseSupport.Queue queue,String assignments){
         return "with expired as (select id from "+queue.table+" where status_value='CLAIMED' and claim_until<=?"
                 +" order by claim_until,id limit 1000 for update skip locked) update "+queue.table
-                +" q set status_value='RETRY_SCHEDULED',claimed_by=null,claim_until=null,claim_token=null"
-                +(queue.timer?",updated_at=?":"")+" from expired e where q.id=e.id";
+                +" q set "+assignments+" from expired e where q.id=e.id";
     }
 
     /**

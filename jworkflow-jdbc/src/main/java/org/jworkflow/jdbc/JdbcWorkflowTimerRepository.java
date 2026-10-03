@@ -154,7 +154,7 @@ final class JdbcWorkflowTimerRepository implements WorkflowTimerRepository {
     /**
      * {@inheritDoc}
      */
-    @Override public int releaseExpiredClaims(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.TIMER,now);}
+    @Override public int releaseExpiredClaims(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.TIMER,now,0);}
     /**
      * {@inheritDoc}
      */

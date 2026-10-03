@@ -32,6 +32,14 @@ public final class JdbcWorkflowPersistence implements WorkflowPersistence {
         commandResults=new JdbcCommandResultRepository(connections);transactions=new JdbcTransactionManager(connections);
     }
     static JdbcWorkflowPersistence from(JdbcConnectionFactory connections){return new JdbcWorkflowPersistence(connections);}
+    /**
+     * Applies the inbox and outbox attempt budgets used when expired leases are released.
+     * @param settings adapter settings containing {@code inbox.max-attempts} and {@code outbox.max-attempts}
+     */
+    void configureLeaseAttemptLimits(Map<String,String> settings){
+        inbox.maxAttempts(JdbcLeaseSupport.maxAttempts(settings,"inbox.max-attempts"));
+        outbox.maxAttempts(JdbcLeaseSupport.maxAttempts(settings,"outbox.max-attempts"));
+    }
 
     /**
      * Resolves the database from connection metadata and creates one strategy/transaction bundle. Optional

@@ -70,6 +70,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     private final AtomicReference<ExecutorService> eventExecutor = new AtomicReference<>();
     private final Clock clock;
     private final EventCapturePolicy eventCapturePolicy;
+    private final boolean backgroundEventLoop;
 
     @SuppressWarnings("java:S107") // Internal composition root; clients use scoped factories or the builder.
     private InMemoryWorkflowEngine(
@@ -81,7 +82,8 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             Map<String, Object> listenerInstances,
             WorkflowPersistence persistence,
             Clock clock,
-        EventCapturePolicy eventCapturePolicy
+        EventCapturePolicy eventCapturePolicy,
+            boolean backgroundEventLoop
     ) {
         this.definitions = Objects.requireNonNull(definitions, "definitions");
         EventPublisher configuredPublisher = Objects.requireNonNull(eventPublisher, "eventPublisher");
@@ -94,6 +96,16 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         this.workflowStartEvents = new ConcurrentHashMap<>(workflowStartEvents == null ? Map.of() : workflowStartEvents);
         this.listenerInstances = new ConcurrentHashMap<>(listenerInstances == null ? Map.of() : listenerInstances);
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.backgroundEventLoop = backgroundEventLoop;
+    }
+
+    @SuppressWarnings("java:S107") // Internal composition root; clients use scoped factories or the builder.
+    private InMemoryWorkflowEngine(WorkflowDefinitionRegistry definitions, EventPublisher eventPublisher,
+            Map<String, StepHandler> stepHandlers, BranchConditionEvaluator branchConditionEvaluator,
+            Map<String, String> workflowStartEvents, Map<String, Object> listenerInstances,
+            WorkflowPersistence persistence, Clock clock, EventCapturePolicy eventCapturePolicy) {
+        this(definitions, eventPublisher, stepHandlers, branchConditionEvaluator, workflowStartEvents,
+                listenerInstances, persistence, clock, eventCapturePolicy, true);
     }
 
     /**
@@ -235,10 +247,15 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
                 workflowStartEvents, listenerInstances, persistence, Clock.systemUTC(), eventCapturePolicy);
     }
 
-    static InMemoryWorkflowEngine create(WorkflowDefinitionRegistry definitions, EventPublisher publisher,
+    /**
+     * Creates a transient engine for one {@link WorkflowStateMachine} calculation. It never starts the background
+     * event loop, so timers it schedules are only returned as data and are fired by the durable runtime alone.
+     */
+    static InMemoryWorkflowEngine createCalculator(WorkflowDefinitionRegistry definitions, EventPublisher publisher,
             Map<String, StepHandler> handlers, BranchConditionEvaluator conditions, Map<String, String> starts,
             Map<String, Object> listeners, Clock clock) {
-        return new InMemoryWorkflowEngine(definitions, publisher, handlers, conditions, starts, listeners, null, clock, CaptureAllEventPolicy.INSTANCE);
+        return new InMemoryWorkflowEngine(definitions, publisher, handlers, conditions, starts, listeners, null, clock,
+                CaptureAllEventPolicy.INSTANCE, false);
     }
 
     /**
@@ -296,7 +313,7 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     }
 
     private void ensureEventLoopStarted() {
-        if (eventExecutor.get() != null) {
+        if (!backgroundEventLoop || eventExecutor.get() != null) {
             return;
         }
         synchronized (this) {

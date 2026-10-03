@@ -90,14 +90,15 @@ public final class WorkflowStateMachine {
      * @return the resulting workflow transition result&lt;start workflow result&gt;
      */
     public WorkflowTransitionResult<StartWorkflowResult> start(StartWorkflowCommand command) {
-        Session session = session(null, List.of());
-        StartWorkflowResult result = session.engine.start(command);
-        WorkflowSnapshot normalized = withLockVersion(result.snapshot(), 0);
-        result = new StartWorkflowResult(result.commandId(), result.workflowInstanceId(), result.workflowKey(),
-                result.workflowVersion(), result.businessKey(), result.correlationId(), result.acceptedAt(),
-                normalized, result.emittedEventIds(), result.idempotentRepeat());
-        return new WorkflowTransitionResult<>(result,
-                new WorkflowMutation(null, normalized, session.events, List.of(), session.engine.allTimers()));
+        try (Session session = session(null, List.of())) {
+            StartWorkflowResult result = session.engine.start(command);
+            WorkflowSnapshot normalized = withLockVersion(result.snapshot(), 0);
+            result = new StartWorkflowResult(result.commandId(), result.workflowInstanceId(), result.workflowKey(),
+                    result.workflowVersion(), result.businessKey(), result.correlationId(), result.acceptedAt(),
+                    normalized, result.emittedEventIds(), result.idempotentRepeat());
+            return new WorkflowTransitionResult<>(result,
+                    new WorkflowMutation(null, normalized, session.events, List.of(), session.engine.allTimers()));
+        }
     }
 
     /**
@@ -204,14 +205,15 @@ public final class WorkflowStateMachine {
                         null, null, timer.createdAt(), timer.updatedAt()));
             }
         }
-        Session session = session(current, executable);
-        WorkflowTimer fired = session.engine.fireDueTimers(now).stream()
-                .filter(timer -> timer.timerId().equals(claimedTimer.timerId()))
-                .findFirst().orElseThrow(() -> new WorkflowInvalidStateException(
-                        "Claimed timer is no longer applicable to workflow " + current.instanceId()));
-        WorkflowSnapshot next = withLockVersion(session.engine.snapshot(current.instanceId()), current.lockVersion() + 1);
-        return new WorkflowTransitionResult<>(fired,
-                new WorkflowMutation(current, next, session.events, timers, session.engine.allTimers()));
+        try (Session session = session(current, executable)) {
+            WorkflowTimer fired = session.engine.fireDueTimers(now).stream()
+                    .filter(timer -> timer.timerId().equals(claimedTimer.timerId()))
+                    .findFirst().orElseThrow(() -> new WorkflowInvalidStateException(
+                            "Claimed timer is no longer applicable to workflow " + current.instanceId()));
+            WorkflowSnapshot next = withLockVersion(session.engine.snapshot(current.instanceId()), current.lockVersion() + 1);
+            return new WorkflowTransitionResult<>(fired,
+                    new WorkflowMutation(current, next, session.events, timers, session.engine.allTimers()));
+        }
     }
 
     private WorkflowTransitionResult<WorkflowCommandResult> command(
@@ -219,19 +221,20 @@ public final class WorkflowStateMachine {
             java.util.function.Function<InMemoryWorkflowEngine, WorkflowCommandResult> operation) {
         Objects.requireNonNull(current, "current");
         List<WorkflowTimer> before = timers == null ? List.of() : List.copyOf(timers);
-        Session session = session(current, before);
-        WorkflowCommandResult result = operation.apply(session.engine);
-        WorkflowSnapshot normalized = withLockVersion(result.snapshot(), current.lockVersion() + 1);
-        result = new WorkflowCommandResult(result.commandId(), result.workflowInstanceId(), result.status(), normalized,
-                result.emittedEventIds(), result.eventStatusAttemptIds(), result.idempotentRepeat());
-        return new WorkflowTransitionResult<>(result,
-                new WorkflowMutation(current, normalized, session.events, before, session.engine.allTimers()));
+        try (Session session = session(current, before)) {
+            WorkflowCommandResult result = operation.apply(session.engine);
+            WorkflowSnapshot normalized = withLockVersion(result.snapshot(), current.lockVersion() + 1);
+            result = new WorkflowCommandResult(result.commandId(), result.workflowInstanceId(), result.status(), normalized,
+                    result.emittedEventIds(), result.eventStatusAttemptIds(), result.idempotentRepeat());
+            return new WorkflowTransitionResult<>(result,
+                    new WorkflowMutation(current, normalized, session.events, before, session.engine.allTimers()));
+        }
     }
 
     private Session session(WorkflowSnapshot snapshot, List<WorkflowTimer> timers) {
         ArrayList<WorkflowEvent> staged = new ArrayList<>();
         EventPublisher collector = staged::add;
-        InMemoryWorkflowEngine engine = InMemoryWorkflowEngine.create(definitions, collector, stepHandlers,
+        InMemoryWorkflowEngine engine = InMemoryWorkflowEngine.createCalculator(definitions, collector, stepHandlers,
                 conditions, workflowStartEvents, listeners, clock);
         if (snapshot != null) engine.restore(snapshot, timers);
         return new Session(engine, staged);
@@ -239,10 +242,13 @@ public final class WorkflowStateMachine {
 
     /**
      * Isolated transient engine session collecting events for one transition calculation.
-     * @param engine engine whose lifetime remains the caller's responsibility
+     * @param engine calculator engine closed when the calculation ends
      * @param events workflow events in their supplied order
      */
-    private record Session(InMemoryWorkflowEngine engine, List<WorkflowEvent> events) { }
+    private record Session(InMemoryWorkflowEngine engine, List<WorkflowEvent> events) implements AutoCloseable {
+        @Override public void close() { engine.close();
+        }
+    }
 
     private static WorkflowSnapshot withLockVersion(WorkflowSnapshot snapshot, long version) {
         return new WorkflowSnapshot(snapshot.instanceId(), snapshot.workflowKey(), snapshot.workflowVersion(),
