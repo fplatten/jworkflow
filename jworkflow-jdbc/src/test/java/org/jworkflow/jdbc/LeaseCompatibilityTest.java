@@ -17,6 +17,14 @@ import static org.jworkflow.jdbc.LeaseContract.*;
 
 class LeaseCompatibilityTest {
     @TempDir Path directory;
+    @TestFactory Stream<DynamicTest> sqliteLeaseSqlBindsUntrustedValues() {
+        return Arrays.stream(Kind.values()).map(kind -> DynamicTest.dynamicTest(kind.name(), () -> {
+            var source = new org.sqlite.SQLiteDataSource();
+            source.setUrl("jdbc:sqlite:" + directory.resolve(kind + "-sql-safety.db"));
+            var persistence = JdbcWorkflowPersistence.create(null, null, null, null, source, true, Map.of());
+            LeaseSqlSafetyContract.assertBoundValues(persistence, source, kind);
+        }));
+    }
     @TestFactory Stream<DynamicTest> sqliteFencedGenerationsAndLegacyOwnerMethods(){
         return Arrays.stream(Kind.values()).map(kind->DynamicTest.dynamicTest(kind.name(),()->{
             var source=new org.sqlite.SQLiteDataSource();source.setUrl("jdbc:sqlite:"+directory.resolve(kind+".db"));

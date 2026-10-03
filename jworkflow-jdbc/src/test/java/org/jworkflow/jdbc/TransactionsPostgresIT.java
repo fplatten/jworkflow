@@ -22,13 +22,13 @@ class TransactionsPostgresIT {
     @AfterAll static void stop() throws Exception {if(database!=null)database.close();}
 
     @Test void nestedCommandsNotifyOnlyAfterOutermostCommitAndConnectionCleanup() throws Exception {
-        try(var schema=database.createSchema()){nestedCommands(WorkflowEngine.Type.POSTGRESQL,schema.dataSource());}
+        try(var schema=database.createSchema()){assertDoesNotThrow(() -> nestedCommands(WorkflowEngine.Type.POSTGRESQL,schema.dataSource()));}
     }
     @Test void everyCommandPersistenceStageRollsBack() throws Exception {
-        try(var schema=database.createSchema()){persistenceStagesRollback(WorkflowEngine.Type.POSTGRESQL,schema.dataSource());}
+        try(var schema=database.createSchema()){assertDoesNotThrow(() -> persistenceStagesRollback(WorkflowEngine.Type.POSTGRESQL,schema.dataSource()));}
     }
     @Test void inboxLaterCommandFailureDiscardsEarlierNotifications() throws Exception {
-        try(var schema=database.createSchema()){inboxMultipleCommands(WorkflowEngine.Type.POSTGRESQL,schema.dataSource());}
+        try(var schema=database.createSchema()){assertDoesNotThrow(() -> inboxMultipleCommands(WorkflowEngine.Type.POSTGRESQL,schema.dataSource()));}
     }
 
     @Test void failedAndAmbiguousCommitsDiscardCallbacksAndNeverReplayCommands() throws Exception {
@@ -39,7 +39,8 @@ class TransactionsPostgresIT {
                 source.commitFailure=new SQLException("secret connection details","08006");
                 source.commitBeforeFailure=committedBeforeFailure;
                 engine.writeProbe(stage->{if(stage.equals("snapshot"))writes.incrementAndGet();});
-                JdbcTransactionException failure=assertThrows(JdbcTransactionException.class,()->engine.transactionManager().inTransaction(()->engine.start(command("commit-failure"))));
+                var transactionManager = engine.transactionManager();
+                JdbcTransactionException failure=assertThrows(JdbcTransactionException.class,()->transactionManager.inTransaction(()->engine.start(command("commit-failure"))));
                 assertSame(source.commitFailure,failure.getCause()); assertEquals("commit",failure.phase());
                 assertEquals(JdbcTransactionException.Category.CONNECTION,failure.category());
                 assertFalse(failure.getMessage().contains("secret")); assertEquals(0,notified.get()); assertEquals(1,writes.get());

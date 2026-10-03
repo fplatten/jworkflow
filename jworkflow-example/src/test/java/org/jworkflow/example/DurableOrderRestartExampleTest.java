@@ -80,8 +80,8 @@ public final class DurableOrderRestartExampleTest {
     @org.junit.jupiter.api.Test
     void inboxAndOutboxRestart() throws Exception {
         String url="jdbc:sqlite:"+Files.createTempFile("order-inbox-restart-",".sqlite").toAbsolutePath();
-        DurableOrderInboxRestartScenario.run(()->WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE)
-                .jdbcUrl(url).initialize(true).timerPolling(false));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> DurableOrderInboxRestartScenario.run(()->WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE)
+                .jdbcUrl(url).initialize(true).timerPolling(false)));
     }
 
     @org.junit.jupiter.api.Test

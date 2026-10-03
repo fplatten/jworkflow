@@ -86,7 +86,8 @@ final class TransactionNotificationContract {
             for(String stage:List.of("snapshot","event","outbox","timer","commandResult")) {
                 AtomicInteger reached=new AtomicInteger();
                 engine.writeProbe(current->{if(current.equals(stage)){reached.incrementAndGet();throw new IllegalStateException(stage);}});
-                assertThrows(IllegalStateException.class,()->engine.start(command(stage)));
+                var failingCommand = command(stage);
+                assertThrows(IllegalStateException.class,()->engine.start(failingCommand));
                 assertEquals(1,reached.get(),"failure point must execute: "+stage);
                 emptyCommands(source); assertEquals(0,observed.get());
             }

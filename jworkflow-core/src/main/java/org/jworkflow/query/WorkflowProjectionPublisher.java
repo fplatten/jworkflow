@@ -4,6 +4,7 @@ import org.jworkflow.events.*;import java.util.Objects;import java.util.concurre
 public final class WorkflowProjectionPublisher implements EventPublisher{
     /** Creates a projection publisher with no subscribers. */
     public WorkflowProjectionPublisher() {
+        // Default construction requires no additional setup.
     }
 
  private final CopyOnWriteArrayList<WorkflowProjection> listeners=new CopyOnWriteArrayList<>();

@@ -137,6 +137,8 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
         }
     }
 
+    // The driver is optional at runtime; explicit loading provides a safe actionable missing-driver error.
+    @SuppressWarnings("java:S4925")
     static void loadDriver() throws ClassNotFoundException {
         try {
             Class.forName("org.postgresql.Driver");

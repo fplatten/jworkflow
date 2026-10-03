@@ -37,17 +37,7 @@ class MigrationsPostgresIT {
             assertFalse(expected.isEmpty());
             assertEquals(expected, catalog(flyway));
             assertEquals(expected, catalog(liquibase));
-            for (var schema : List.of(builtin, flyway, liquibase)) {
-                try (Connection connection = schema.openConnection()) {
-                    assertEquals(13, scalar(connection, "select count(*) from information_schema.tables where table_schema=current_schema() and (table_name like 'workflow_%' or table_name='event_status')"));
-                    assertEquals(28, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and (table_name like 'workflow_%' or table_name='event_status') and data_type='numeric' and numeric_precision=30 and numeric_scale=9"));
-                    assertEquals(3, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and column_name='claim_token' and is_nullable='YES'"));
-                    assertEquals(3, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and data_type='bigint'"));
-                    assertEquals(3, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and data_type='bytea'"));
-                    assertEquals(0, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and (table_name like 'workflow_%' or table_name='event_status') and data_type='character varying' and collation_name is distinct from 'C'"));
-                    assertConstraintSemantics(connection);
-                }
-            }
+            assertApplicationCatalogs(List.of(builtin, flyway, liquibase));
             try (Connection connection = builtin.openConnection()) {
                 assertEquals(2, scalar(connection, "select count(*) from jworkflow_schema_history"));
                 assertEquals(1, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and table_name='jworkflow_schema_history' and column_name='installed_at' and data_type='numeric' and numeric_scale=9"));
@@ -92,15 +82,16 @@ class MigrationsPostgresIT {
             try {
                 Future<?> waiting = worker.submit(() -> initialize(blocked));
                 // Observe an actual blocked backend, not an assumption based on elapsed time.
-                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
-                boolean observed = false;
-                try (Connection observer = database.openAdminConnection()) {
-                    while (System.nanoTime() < deadline) {
-                        if (scalar(observer, "select count(*) from pg_locks where locktype='advisory' and not granted and classid=" + PostgresqlSchemaInitializer.LOCK_NAMESPACE) > 0) { observed = true; break; }
-                        Thread.sleep(10);
-                    }
-                }
-                assertTrue(observed, "initializer must wait on the schema lock");
+                ScheduledExecutorService observer = Executors.newSingleThreadScheduledExecutor();
+                CompletableFuture<Boolean> blockedLock = new CompletableFuture<>();
+                try {
+                    observer.scheduleWithFixedDelay(() -> {
+                        try (Connection connection = database.openAdminConnection()) {
+                            if (scalar(connection, "select count(*) from pg_locks where locktype='advisory' and not granted and classid=" + PostgresqlSchemaInitializer.LOCK_NAMESPACE) > 0) blockedLock.complete(true);
+                        } catch (Exception failure) { blockedLock.completeExceptionally(failure); }
+                    }, 0, 10, TimeUnit.MILLISECONDS);
+                    assertTrue(blockedLock.get(4, TimeUnit.SECONDS), "initializer must wait on the schema lock");
+                } finally { observer.shutdownNow(); assertTrue(observer.awaitTermination(10, TimeUnit.SECONDS)); }
                 assertFalse(waiting.isDone());
                 initialize(other); // Independent schema progresses while the first is locked.
                 holder.commit();
@@ -133,7 +124,8 @@ class MigrationsPostgresIT {
         try (var schema = database.createSchema()) {
             List<PostgresqlSchemaInitializer.Migration> migrations = new ArrayList<>(PostgresqlSchemaInitializer.MIGRATIONS);
             migrations.add(new PostgresqlSchemaInitializer.Migration(3, "injected failure", "postgres-fixture/failing-migration.sql"));
-            assertThrows(WorkflowInfrastructureException.class, () -> PostgresqlSchemaInitializer.initialize(factory(schema), migrations));
+            var migrationFactory = factory(schema);
+            assertThrows(WorkflowInfrastructureException.class, () -> PostgresqlSchemaInitializer.initialize(migrationFactory, migrations));
             try (Connection connection = schema.openConnection()) {
                 assertEquals(0, scalar(connection, "select count(*) from information_schema.tables where table_schema=current_schema()"));
             }
@@ -197,7 +189,8 @@ class MigrationsPostgresIT {
             PGSimpleDataSource source = (PGSimpleDataSource)schema.dataSource();
             missing.setURL(source.getURL()); missing.setUser(source.getUser()); missing.setPassword(source.getPassword());
             missing.setCurrentSchema("absent_" + UUID.randomUUID().toString().replace("-", ""));
-            assertThrows(WorkflowInfrastructureException.class, () -> JdbcWorkflowPersistence.create(null,null,null,null,missing,true,Map.of()));
+            Map<String,String> settings = Map.of();
+            assertThrows(WorkflowInfrastructureException.class, () -> JdbcWorkflowPersistence.create(null,null,null,null,missing,true,settings));
         }
     }
 
@@ -276,5 +269,18 @@ class MigrationsPostgresIT {
     }
     static long scalar(Connection connection, String sql) throws SQLException {
         try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) { assertTrue(rows.next()); return rows.getLong(1); }
+    }
+    private static void assertApplicationCatalogs(List<PostgresTestDatabase.Schema> schemas) throws Exception {
+            for (var schema : schemas) {
+                try (Connection connection = schema.openConnection()) {
+                    assertEquals(13, scalar(connection, "select count(*) from information_schema.tables where table_schema=current_schema() and (table_name like 'workflow_%' or table_name='event_status')"));
+                    assertEquals(28, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and (table_name like 'workflow_%' or table_name='event_status') and data_type='numeric' and numeric_precision=30 and numeric_scale=9"));
+                    assertEquals(3, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and column_name='claim_token' and is_nullable='YES'"));
+                    assertEquals(3, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and data_type='bigint'"));
+                    assertEquals(3, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and data_type='bytea'"));
+                    assertEquals(0, scalar(connection, "select count(*) from information_schema.columns where table_schema=current_schema() and (table_name like 'workflow_%' or table_name='event_status') and data_type='character varying' and collation_name is distinct from 'C'"));
+                    assertConstraintSemantics(connection);
+                }
+            }
     }
 }

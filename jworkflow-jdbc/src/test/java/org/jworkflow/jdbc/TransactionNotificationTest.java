@@ -18,13 +18,13 @@ class TransactionNotificationTest {
     }
 
     @Test void sqliteNestedCommandsNotifyOnlyAfterCommitAndCleanup() {
-        TransactionNotificationContract.nestedCommands(WorkflowEngine.Type.SQLITE,source());
+        assertDoesNotThrow(() -> TransactionNotificationContract.nestedCommands(WorkflowEngine.Type.SQLITE,source()));
     }
     @Test void sqliteEveryCommandPersistenceStageRollsBack() {
-        TransactionNotificationContract.persistenceStagesRollback(WorkflowEngine.Type.SQLITE,source());
+        assertDoesNotThrow(() -> TransactionNotificationContract.persistenceStagesRollback(WorkflowEngine.Type.SQLITE,source()));
     }
     @Test void sqliteInboxLaterCommandFailureDiscardsEarlierNotifications() {
-        TransactionNotificationContract.inboxMultipleCommands(WorkflowEngine.Type.SQLITE,source());
+        assertDoesNotThrow(() -> TransactionNotificationContract.inboxMultipleCommands(WorkflowEngine.Type.SQLITE,source()));
     }
     @Test void legacyCustomManagersRemainFunctionalAndCanOptIntoSynchronization() {
         WorkflowTransactionManager legacy=WorkflowTransaction::execute;

@@ -67,11 +67,15 @@ final class DuplicateRepositoryContract {
                     new EventMessage(payload,message.contentType(),"different",message.schemaVersion(),message.redacted(),message.attributes()),
                     new EventMessage(payload,message.contentType(),message.schemaName(),"2",message.redacted(),message.attributes()),
                     new EventMessage(payload,message.contentType(),message.schemaName(),message.schemaVersion(),true,message.attributes()),
-                    new EventMessage(payload,message.contentType(),message.schemaName(),message.schemaVersion(),false,Map.of("header","different"))))
-                assertThrows(PersistenceConstraintException.class,()->ports.outbox().enqueue(withEnvelope(base,changed)));
+                    new EventMessage(payload,message.contentType(),message.schemaName(),message.schemaVersion(),false,Map.of("header","different")))) {
+                var changedEnvelope = withEnvelope(base,changed);
+                var outbox = ports.outbox();
+                assertThrows(PersistenceConstraintException.class,()->outbox.enqueue(changedEnvelope));
+            }
         }
         CommandResultRecord winner=(CommandResultRecord)sample(Kind.COMMAND,"types");save(ports,winner);
-        assertThrows(PersistenceConstraintException.class,()->save(ports,new CommandResultRecord(winner.idempotencyKey(),"cancel",winner.requestHash(),null,Map.of(),NOW)));
+        var conflictingResult = new CommandResultRecord(winner.idempotencyKey(),"cancel",winner.requestHash(),null,Map.of(),NOW);
+        assertThrows(PersistenceConstraintException.class,()->save(ports,conflictingResult));
         assertEquals(winner,find(ports,winner));
     }
 

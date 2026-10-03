@@ -13,6 +13,7 @@ import java.util.Set;
 public final class DefinitionValidator {
     /** Creates a stateless validator for workflow graph constraints. */
     public DefinitionValidator() {
+        // Default construction requires no additional setup.
     }
 
     /**

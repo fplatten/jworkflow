@@ -93,17 +93,19 @@ class FoundationPostgresIT {
         }
     }
 
+    private static void abandonSchema(PostgresTestDatabase.Schema schema, Connection abandoned) throws Exception {
+        try (schema; Statement statement = abandoned.createStatement()) {
+            abandoned.setAutoCommit(false);
+            statement.execute("create table abandoned_probe (id integer)");
+            throw new IllegalStateException("injected test failure");
+        }
+    }
+
     @Test
     void failureCleanupClosesAbandonedConnectionsAndDropsSchema() throws Exception {
         var schema = database.createSchema();
         Connection abandoned = schema.openConnection();
-        IllegalStateException injected = assertThrows(IllegalStateException.class, () -> {
-            try (schema; Statement statement = abandoned.createStatement()) {
-                abandoned.setAutoCommit(false);
-                statement.execute("create table abandoned_probe (id integer)");
-                throw new IllegalStateException("injected test failure");
-            }
-        });
+        IllegalStateException injected = assertThrows(IllegalStateException.class, () -> abandonSchema(schema, abandoned));
         assertEquals("injected test failure", injected.getMessage());
         assertEquals(0, injected.getSuppressed().length, "cleanup itself must succeed");
         assertTrue(abandoned.isClosed());

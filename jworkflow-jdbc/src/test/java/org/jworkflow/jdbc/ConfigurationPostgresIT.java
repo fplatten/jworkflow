@@ -90,12 +90,13 @@ class ConfigurationPostgresIT {
     @Test void rejectsWrongProductAndSqliteSettingsBeforeCreatingObjects() throws Exception {
         try (var schema = database.createSchema()) {
             DataSource source = schema.dataSource();
-            assertThrows(WorkflowInfrastructureException.class, () -> WorkflowEngine.builder()
-                    .type(WorkflowEngine.Type.SQLITE).dataSource(source).build());
-            assertThrows(IllegalArgumentException.class, () -> WorkflowEngine.builder()
-                    .type(WorkflowEngine.Type.POSTGRESQL).dataSource(source).sqliteWalEnabled(false).build());
+            var wrongBackend = WorkflowEngine.builder().type(WorkflowEngine.Type.SQLITE).dataSource(source);
+            assertThrows(WorkflowInfrastructureException.class, wrongBackend::build);
+            var wrongSetting = WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL).dataSource(source).sqliteWalEnabled(false);
+            assertThrows(IllegalArgumentException.class, wrongSetting::build);
+            var sqliteSettings = Map.of("sqlite.busy-timeout-ms","5000");
             assertThrows(IllegalArgumentException.class, () -> JdbcWorkflowPersistence.create(null,null,null,null,
-                    source,false,Map.of("sqlite.busy-timeout-ms","5000")));
+                    source,false,sqliteSettings));
             try (Connection connection = source.getConnection(); Statement statement = connection.createStatement();
                  ResultSet rows = statement.executeQuery("select count(*) from information_schema.tables where table_schema=current_schema()")) {
                 assertTrue(rows.next()); assertEquals(0,rows.getInt(1));

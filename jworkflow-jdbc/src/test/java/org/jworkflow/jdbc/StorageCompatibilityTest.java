@@ -15,8 +15,8 @@ class StorageCompatibilityTest {
     @TempDir Path directory;
     @Test void sqliteRetainsPayloadAndExactStringRoundTrips() {
         JdbcWorkflowPersistence persistence=persistence("roundtrip");
-        StorageValueContract.payloads(persistence);
-        StorageValueContract.exactTimesAndRevisions(persistence);
+        assertDoesNotThrow(() -> StorageValueContract.payloads(persistence));
+        assertDoesNotThrow(() -> StorageValueContract.exactTimesAndRevisions(persistence));
     }
 
     @Test void sqliteMixedFractionOrderingIsCharacterizedNotClaimedCorrect() {

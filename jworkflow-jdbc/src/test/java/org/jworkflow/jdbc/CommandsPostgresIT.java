@@ -142,7 +142,8 @@ class CommandsPostgresIT {
             AtomicInteger handlers=new AtomicInteger();
             try(var engine=engine(schema.dataSource(),handlers::incrementAndGet,()->{},Map.of("postgres.command-lock-timeout-ms","150"))) {
                 holder.setAutoCommit(false);new PostgresqlDatabaseStrategy(Map.of()).lockCommand(holder,"blocked");
-                long begin=System.nanoTime();var failure=assertThrows(JdbcTransactionException.class,()->engine.start(command("blocked")));
+                var blockedCommand = command("blocked");
+                long begin=System.nanoTime();var failure=assertThrows(JdbcTransactionException.class,()->engine.start(blockedCommand));
                 assertEquals(JdbcTransactionException.Category.TIMEOUT,failure.category());assertEquals("55P03",sqlCause(failure).getSQLState());
                 assertTrue(System.nanoTime()-begin<TimeUnit.SECONDS.toNanos(4));assertEquals(0,handlers.get());
                 TransactionNotificationContract.emptyCommands(schema.dataSource());holder.rollback();
@@ -161,7 +162,8 @@ class CommandsPostgresIT {
                 var faults=new TransactionTestDataSource(schema.dataSource());AtomicInteger handlers=new AtomicInteger();
                 try(var first=engine(faults,handlers::incrementAndGet)) {
                     faults.commitBeforeFailure=committed;faults.commitFailure=new SQLException("acknowledgment lost","08006");
-                    var failure=assertThrows(JdbcTransactionException.class,()->first.start(command("same")));
+                    var repeatedCommand = command("same");
+                    var failure=assertThrows(JdbcTransactionException.class,()->first.start(repeatedCommand));
                     assertTrue(JdbcTransactionException.requiresReconciliation(failure));
                 }
                 faults.commitFailure=null;assertEquals(committed?1:0,count(schema.dataSource(),"workflow_instance"));
@@ -183,7 +185,8 @@ class CommandsPostgresIT {
             try(var second=engine(schema.dataSource(),()->{fail("replay ran handler");})) {
                 assertEquals(started.asIdempotentRepeat(),second.start(command("same")));
                 assertEquals(signalled.asIdempotentRepeat(),second.signal(signal(started.workflowInstanceId(),"signal",new EventMessage(new byte[]{0,1,2},"application/octet-stream",null,null,false,Map.of()))));
-                assertThrows(WorkflowIdempotencyConflictException.class,()->second.signal(signal(started.workflowInstanceId(),"signal",new EventMessage(new byte[]{0,1,3},"application/octet-stream",null,null,false,Map.of()))));
+                var conflictingSignal = signal(started.workflowInstanceId(),"signal",new EventMessage(new byte[]{0,1,3},"application/octet-stream",null,null,false,Map.of()));
+                assertThrows(WorkflowIdempotencyConflictException.class,()->second.signal(conflictingSignal));
             }
         }
     }
@@ -195,7 +198,8 @@ class CommandsPostgresIT {
                 try(var first=engine(faults,()->{},effects::incrementAndGet,Map.of())) {
                     id=first.start(command("same")).workflowInstanceId();
                     faults.commitBeforeFailure=committed;faults.commitFailure=new SQLException("lost acknowledgment","08006");
-                    assertThrows(JdbcTransactionException.class,()->first.signal(signal(id,"signal",EventMessage.empty())));
+                    var failingSignal = signal(id,"signal",EventMessage.empty());
+                    assertThrows(JdbcTransactionException.class,()->first.signal(failingSignal));
                     assertEquals(1,effects.get(),"no automatic handler replay");
                 }
                 faults.commitFailure=null;
@@ -216,7 +220,8 @@ class CommandsPostgresIT {
             var route=WorkflowEventRoute.exact(started.workflowInstanceId(),event.eventName());
             assertEquals(WorkflowRoutingOutcome.ROUTED,engine.route(event,route).outcome());int events=count(schema.dataSource(),"workflow_event");
             assertEquals(WorkflowRoutingOutcome.ROUTED,engine.route(event,route).outcome());assertEquals(events,count(schema.dataSource(),"workflow_event"));
-            assertThrows(WorkflowIdempotencyConflictException.class,()->engine.route(new WorkflowEvent(event.metadata(),EventMessage.json(Map.of("v",2))),route));
+            var conflictingEvent = new WorkflowEvent(event.metadata(),EventMessage.json(Map.of("v",2)));
+            assertThrows(WorkflowIdempotencyConflictException.class,()->engine.route(conflictingEvent,route));
         }
     }
 
@@ -253,7 +258,9 @@ class CommandsPostgresIT {
                 awaitBlocked(schema.dataSource(),tracked.application);release.countDown();a.get(15,TimeUnit.SECONDS);b.get(15,TimeUnit.SECONDS);assertSequences(schema.dataSource());
                 int before=count(schema.dataSource(),"workflow_event");
                 try(Connection c=schema.openConnection();Statement s=c.createStatement()){s.executeUpdate("update workflow_event_sequence set last_sequence=9223372036854775807");}
-                var failure=assertThrows(WorkflowInfrastructureException.class,()->first.events().append(StorageValueContract.event(started.workflowInstanceId(),EventMessage.empty(),NOW)));
+                var eventRepository = first.events();
+                var overflowEvent = StorageValueContract.event(started.workflowInstanceId(),EventMessage.empty(),NOW);
+                var failure=assertThrows(WorkflowInfrastructureException.class,()->eventRepository.append(overflowEvent));
                 assertEquals("22003",sqlCause(failure).getSQLState());assertEquals(before,count(schema.dataSource(),"workflow_event"));
                 try(Connection c=schema.openConnection()){assertEquals(Long.MAX_VALUE,scalar(c,"select last_sequence from workflow_event_sequence"));}
             }finally{release.countDown();executor.shutdownNow();assertTrue(executor.awaitTermination(20,TimeUnit.SECONDS));}
@@ -272,10 +279,12 @@ class CommandsPostgresIT {
                 ports(schema.dataSource(),false).events().append(StorageValueContract.event(other,EventMessage.empty(),NOW));
                 assertEquals(1,count(schema.dataSource(),"workflow_event"),"another instance makes progress while first counter is locked");
                 release.countDown();a.get(15,TimeUnit.SECONDS);b.get(15,TimeUnit.SECONDS);
-                assertThrows(WorkflowInfrastructureException.class,()->second.events().append(event));
+                var eventRepository = second.events();
+                assertThrows(WorkflowInfrastructureException.class,()->eventRepository.append(event));
                 second.events().append(StorageValueContract.event(id,EventMessage.empty(),NOW));
                 assertEquals(4,count(schema.dataSource(),"workflow_event"));assertSequences(schema.dataSource());
-                assertThrows(Abort.class,()->first.jdbcTransactions().inWriteTransaction(()->{first.events().append(StorageValueContract.event(id,EventMessage.empty(),NOW));throw new Abort();}));
+                var transactionManager = first.jdbcTransactions();
+                assertThrows(Abort.class,()->transactionManager.inWriteTransaction(()->{first.events().append(StorageValueContract.event(id,EventMessage.empty(),NOW));throw new Abort();}));
                 assertEquals(4,count(schema.dataSource(),"workflow_event"));assertSequences(schema.dataSource());
             }finally{release.countDown();executor.shutdownNow();assertTrue(executor.awaitTermination(20,TimeUnit.SECONDS));}
         }

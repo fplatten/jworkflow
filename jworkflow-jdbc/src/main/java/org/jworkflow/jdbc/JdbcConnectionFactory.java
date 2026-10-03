@@ -27,7 +27,7 @@ final class JdbcConnectionFactory {
     private final DataSource dataSource;
     private final WorkflowEngine.Type expectedType;
     private final Map<String, String> settings;
-    private volatile JdbcDatabaseStrategy strategy;
+    private JdbcDatabaseStrategy strategy;
     private final ThreadLocal<Connection> transactionConnection = new ThreadLocal<>();
     private final ThreadLocal<Boolean> writeTransaction = new ThreadLocal<>();
     private final ThreadLocal<Throwable> rollbackCause = new ThreadLocal<>();
@@ -63,7 +63,23 @@ final class JdbcConnectionFactory {
         return bound == null ? openPhysical() : closeShield(bound);
     }
 
+    // Errors must preserve rollback/resource cleanup or isolate already committed notifications.
+    @SuppressWarnings("java:S1181")
     Connection openPhysical() throws SQLException {
+        Connection connection = borrow();
+        if (connection == null) {
+            throw new SQLException("Supplied JDBC Driver did not accept the configured URL");
+        }
+        try {
+            resolveStrategy(connection).configure(connection);
+            return connection;
+        } catch (SQLException | RuntimeException | Error failure) {
+            try { connection.close(); } catch (SQLException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
+    }
+
+    private Connection borrow() throws SQLException {
         Connection connection;
         if (dataSource != null) {
             connection = dataSource.getConnection();
@@ -83,16 +99,7 @@ final class JdbcConnectionFactory {
                 connection = DriverManager.getConnection(jdbcUrl, connectionProperties);
             }
         }
-        if (connection == null) {
-            throw new SQLException("Supplied JDBC Driver did not accept the configured URL");
-        }
-        try {
-            resolveStrategy(connection).configure(connection);
-            return connection;
-        } catch (SQLException | RuntimeException | Error failure) {
-            try { connection.close(); } catch (SQLException closeFailure) { failure.addSuppressed(closeFailure); }
-            throw failure;
-        }
+        return connection;
     }
 
     void bind(Connection connection, boolean immediate) {
@@ -131,7 +138,7 @@ final class JdbcConnectionFactory {
         return strategy;
     }
 
-    JdbcDatabaseStrategy strategy() {
+    synchronized JdbcDatabaseStrategy strategy() {
         if (strategy == null) {
             try (Connection ignored = openPhysical()) {
                 // Resolve once from real metadata; every later borrow verifies product consistency.

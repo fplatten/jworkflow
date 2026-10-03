@@ -5,7 +5,6 @@ import org.jworkflow.model.WorkflowInstanceId;
 import org.jworkflow.persistence.*;
 
 import java.sql.*;
-import java.time.Instant;
 import java.util.Optional;
 
 /**
