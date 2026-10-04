@@ -73,7 +73,11 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
     private final CopyOnWriteArrayList<WorkflowTimer> timers = new CopyOnWriteArrayList<>();
     private final Map<String, String> workflowStartEvents;
     private final Map<String, Object> listenerInstances;
-    private final BlockingQueue<WorkflowEvent> incomingEvents = new LinkedBlockingQueue<>();
+    private final BlockingQueue<QueuedEvent> incomingEvents = new LinkedBlockingQueue<>();
+    private final java.util.Set<Delivery> openDeliveries = ConcurrentHashMap.newKeySet();
+    private volatile Thread eventLoopThread;
+    /** The delivery whose event the current event-loop thread is processing; events it publishes join it. */
+    private static final ThreadLocal<Delivery> CURRENT_DELIVERY = new ThreadLocal<>();
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final WorkflowEngineContext context = new InMemoryWorkflowEngineContext();
     private final AtomicReference<ExecutorService> eventExecutor = new AtomicReference<>();
@@ -289,8 +293,74 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         if (!running.get()) {
             throw new WorkflowInvalidStateException("Workflow engine is closed");
         }
-        incomingEvents.add(SafeEventCapturePolicy.filter(eventCapturePolicy, enrichFromCurrentContext(event)));
+        WorkflowEvent filtered = SafeEventCapturePolicy.filter(eventCapturePolicy, enrichFromCurrentContext(event));
+        Delivery current = CURRENT_DELIVERY.get();
+        if (!backgroundEventLoop || current != null || Thread.currentThread() == eventLoopThread) {
+            // Published while the loop processes another event: waiting here would wait on this thread itself.
+            if (current != null) {
+                current.add();
+            }
+            incomingEvents.add(new QueuedEvent(filtered, current));
+            ensureEventLoopStarted();
+            return;
+        }
+        Delivery delivery = new Delivery();
+        openDeliveries.add(delivery);
+        incomingEvents.add(new QueuedEvent(filtered, delivery));
         ensureEventLoopStarted();
+        awaitDelivery(delivery);
+    }
+
+    private void awaitDelivery(Delivery delivery) {
+        try {
+            delivery.done.get();
+        } catch (InterruptedException interrupted) {
+            // The event stays queued and is still processed; the caller just stops waiting for it.
+            Thread.currentThread().interrupt();
+        } catch (java.util.concurrent.ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new WorkflowInfrastructureException("Published workflow event failed", cause);
+        } finally {
+            openDeliveries.remove(delivery);
+        }
+    }
+
+    /**
+     * One published event together with every event its processing publishes. The publisher waits until all of
+     * them are processed, and receives the first failure among them.
+     */
+    private static final class Delivery {
+        private final java.util.concurrent.atomic.AtomicInteger pending = new java.util.concurrent.atomic.AtomicInteger(1);
+        private final java.util.concurrent.CompletableFuture<Void> done = new java.util.concurrent.CompletableFuture<>();
+        private final AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        void add() {
+            pending.incrementAndGet();
+        }
+
+        void fail(Throwable cause) {
+            failure.compareAndSet(null, cause);
+        }
+
+        void finish() {
+            if (pending.decrementAndGet() == 0) {
+                Throwable cause = failure.get();
+                if (cause == null) {
+                    done.complete(null);
+                } else {
+                    done.completeExceptionally(cause);
+                }
+            }
+        }
+    }
+
+    private record QueuedEvent(WorkflowEvent event, Delivery delivery) {
     }
 
     /**
@@ -331,6 +401,9 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
             if (executor != null) {
                 executor.shutdownNow();
             }
+            WorkflowInvalidStateException closed =
+                    new WorkflowInvalidStateException("Workflow engine closed before the published event was processed");
+            openDeliveries.forEach(delivery -> delivery.done.completeExceptionally(closed));
         }
     }
 
@@ -353,14 +426,16 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
 
     @SuppressWarnings("java:S3776") // Lifecycle, interruption, and timer polling form one event loop.
     private void eventLoop() {
+        eventLoopThread = Thread.currentThread();
         int idlePolls = 0;
         while (running.get()) {
             WorkflowEvent event = null;
             try {
-                event = incomingEvents.poll(100, TimeUnit.MILLISECONDS);
-                if (event != null) {
+                QueuedEvent queued = incomingEvents.poll(100, TimeUnit.MILLISECONDS);
+                if (queued != null) {
                     idlePolls = 0;
-                    processPublishedEvent(event);
+                    event = queued.event();
+                    processQueuedEvent(queued);
                 } else if (pendingTimers().isEmpty() && ++idlePolls >= 10) {
                     synchronized (this) {
                         if (incomingEvents.isEmpty() && pendingTimers().isEmpty()) {
@@ -405,24 +480,33 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         }
     }
 
+    private void processQueuedEvent(QueuedEvent queued) {
+        Delivery delivery = queued.delivery();
+        CURRENT_DELIVERY.set(delivery);
+        try {
+            processPublishedEvent(queued.event());
+        } catch (RuntimeException | Error failure) {
+            if (delivery == null) {
+                throw failure;
+            }
+            recordEventLoopFailure(queued.event(), failure);
+            delivery.fail(failure);
+        } finally {
+            CURRENT_DELIVERY.remove();
+            if (delivery != null) {
+                delivery.finish();
+            }
+        }
+    }
+
     private void processPublishedEvent(WorkflowEvent event) {
         eventPublisher.publish(incomingObservation("event.received", event, null));
         java.util.HashSet<WorkflowInstanceId> startedInstances = new java.util.HashSet<>();
-        for (WorkflowDefinition definition : startWorkflowsFor(event.eventName().value())) {
-            String businessKey = correlationValue(definition, event);
+        for (WorkflowDefinition definition : EventCorrelation.startedBy(definitions, workflowStartEvents, event.eventName().value())) {
+            String businessKey = requireCorrelationValue(definition.metadata().get("correlateBy"), event);
             WorkflowInstanceId existing = instancesByBusinessKey.get(instanceKey(definition.name(), businessKey));
             if (existing == null) {
-                StartWorkflowResult result = start(new StartWorkflowCommand(
-                        definition.name(),
-                        definition.version(),
-                        businessKey,
-                        eventVariables(event, businessKey),
-                        new WorkflowCommandMetadata(
-                                null, event.metadata().eventId() + ":" + definition.key(), definition.name(), definition.version(),
-                                null, businessKey, eventCorrelationId(event),
-                                event.metadata().eventId().toString(), event.metadata().traceId(),
-                                event.metadata().tenantId(), event.metadata().sourceSystem(), null,
-                                event.metadata().receivedAt(), event.metadata().headers())));
+                StartWorkflowResult result = start(EventCorrelation.startCommand(definition, businessKey, event));
                 WorkflowInstanceId started = result.workflowInstanceId();
                 startedInstances.add(started);
                 signal(started, event);
@@ -460,16 +544,6 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         if (startedInstances.isEmpty() && targets.isEmpty()) {
             eventPublisher.publish(incomingObservation("event.ignored", event, null));
         }
-    }
-
-    private List<WorkflowDefinition> startWorkflowsFor(String eventName) {
-        String configured = workflowStartEvents.get(eventName);
-        return definitions.snapshot().values().stream()
-                .filter(definition -> eventName.equals(definition.metadata().get("startEvent"))
-                        || definition.name().equals(configured))
-                .sorted(java.util.Comparator.comparing(WorkflowDefinition::name)
-                        .thenComparing(WorkflowDefinition::version))
-                .toList();
     }
 
     /**
@@ -1587,53 +1661,31 @@ public final class InMemoryWorkflowEngine implements WorkflowEngine {
         if (definition == null) {
             throw new WorkflowDefinitionNotFoundException(snapshot.workflowKey(), snapshot.workflowVersion());
         }
-        WorkflowNode node = definition.nodes().get(snapshot.state());
-        String correlationKey = node != null && node.waitDefinition() != null
-                && node.waitDefinition().correlateBy() != null
-                && !node.waitDefinition().correlateBy().isBlank()
-                ? node.waitDefinition().correlateBy()
-                : definition.metadata().get("correlateBy");
-        return correlationValue(correlationKey, event);
+        String value = EventCorrelation.correlationValue(definition, snapshot, event);
+        if (value == null) {
+            WorkflowNode node = definition.nodes().get(snapshot.state());
+            throw missingCorrelation(node != null && node.waitDefinition() != null
+                    && node.waitDefinition().correlateBy() != null && !node.waitDefinition().correlateBy().isBlank()
+                    ? node.waitDefinition().correlateBy() : definition.metadata().get("correlateBy"));
+        }
+        return value;
     }
 
-    private static String correlationValue(WorkflowDefinition definition, WorkflowEvent event) {
-        return correlationValue(definition.metadata().get("correlateBy"), event);
+    private static String requireCorrelationValue(String correlationKey, WorkflowEvent event) {
+        String value = EventCorrelation.correlationValue(correlationKey, event);
+        if (value == null) {
+            throw missingCorrelation(correlationKey);
+        }
+        return value;
     }
 
-    private static String correlationValue(String correlationKey, WorkflowEvent event) {
-        Object value = null;
-        if (correlationKey != null && !correlationKey.isBlank()) {
-            value = event.metadata().headers().get(correlationKey);
-            if (value == null && event.message().payload() instanceof Map<?, ?> payload) {
-                value = payload.get(correlationKey);
-            }
-        }
-        if (value == null) {
-            value = event.metadata().businessKey();
-        }
-        if (value == null) {
-            value = event.metadata().headers().get(TEXT_BUSINESS_KEY);
-        }
-        if (value == null || value.toString().isBlank()) {
-            throw new IllegalArgumentException("Published workflow event must include correlation key "
-                    + (correlationKey == null || correlationKey.isBlank() ? TEXT_BUSINESS_KEY : correlationKey));
-        }
-        return value.toString();
+    private static IllegalArgumentException missingCorrelation(String correlationKey) {
+        return new IllegalArgumentException("Published workflow event must include correlation key "
+                + (correlationKey == null || correlationKey.isBlank() ? TEXT_BUSINESS_KEY : correlationKey));
     }
 
     private static Map<String, Object> eventVariables(WorkflowEvent event, String businessKey) {
-        LinkedHashMap<String, Object> variables = new LinkedHashMap<>();
-        variables.putAll(event.metadata().headers());
-        Object payload = event.message().payload();
-        if (payload instanceof Map<?, ?> map) {
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                if (entry.getKey() != null) {
-                    variables.put(entry.getKey().toString(), entry.getValue());
-                }
-            }
-        }
-        variables.putIfAbsent(TEXT_BUSINESS_KEY, businessKey);
-        return variables;
+        return EventCorrelation.eventVariables(event, businessKey);
     }
 
     private WorkflowSignal signalFrom(WorkflowEvent event, String businessKey) {

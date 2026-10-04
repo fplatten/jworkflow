@@ -17,7 +17,7 @@ class DurableContractsPostgresIT {
                 JdbcWorkflowEngineDurabilityTest.class,JdbcRecoveryContractTest.class,
                 JdbcStartupScalabilityTest.class,JdbcInboxLifecycleTest.class,JdbcOutboxLifecycleTest.class,
                 JdbcEventRoutingContractTest.class,JdbcQueryContractTest.class,
-                JdbcSecurityCaptureContractTest.class,JdbcObservabilityContractTest.class,JdbcClockContractTest.class,JdbcCommandReplayContractTest.class,JdbcDeadLetterEventContractTest.class,JdbcDeadLetterQueryContractTest.class)
+                JdbcSecurityCaptureContractTest.class,JdbcObservabilityContractTest.class,JdbcClockContractTest.class,JdbcCommandReplayContractTest.class,JdbcDeadLetterEventContractTest.class,JdbcDeadLetterQueryContractTest.class,JdbcPublishParityContractTest.class)
                 .flatMap(type->{
                     List<Method> scenarios=Arrays.stream(type.getDeclaredMethods())
                             .filter(m->!m.isSynthetic() && Modifier.isStatic(m.getModifiers()) && m.getReturnType()==void.class

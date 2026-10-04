@@ -43,6 +43,14 @@ All notable changes are recorded here. The project has not been released yet; ve
 - `Long`, `BigDecimal`, `BigInteger`, `Float`, `Short` and `Byte` workflow variables keep their type and exact value
   after a save and reload.
 - One failing fan-out target no longer rolls back delivery to the others.
+- `engine.publish(event)` has the same effect on every engine. The durable engines now start a workflow whose start
+  event it is (`startWhen` / `start when:` or `startWorkflowOn`) and deliver it to waiting instances by the
+  definition's `correlateBy` field, as the in-memory engine did; they used to reject any event without a
+  `workflowKey` header. The in-memory engine's `publish` now returns once the event, and every event its listeners
+  publish, has been processed, and throws the failure if processing fails. It used to return at once and only log
+  failures, so a broken listener or a missing correlation field left the workflow silently stalled.
+- A Java-builder step that only names a listener gets its step name as its action, as in the DSL. It used to have no
+  action, and running it failed with a `NullPointerException`.
 - `pendingWaits` finds waits beyond the first page; `findByCorrelationId` ignores finished instances.
 - Header and attribute redaction is case-insensitive.
 - Inbox acceptance ignores caller-supplied status, attempts and claims.

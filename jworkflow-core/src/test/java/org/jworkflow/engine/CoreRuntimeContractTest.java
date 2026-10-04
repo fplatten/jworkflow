@@ -226,8 +226,8 @@ public final class CoreRuntimeContractTest {
                 .listener("thrower", listener)
                 .persistence(persistence)
                 .build()) {
-            engine.publish(WorkflowEvent.named("thing.created", Map.of("thingId", "thing-1")));
-            await(() -> !persistence.statuses.isEmpty());
+            expect(WorkflowInfrastructureException.class,
+                    () -> engine.publish(WorkflowEvent.named("thing.created", Map.of("thingId", "thing-1"))));
             require(!persistence.snapshots.isEmpty(), "State changes were not persisted");
             require(!persistence.events.isEmpty(), "Runtime events were not persisted");
             require(!persistence.timers.isEmpty(), "Timers were not persisted");

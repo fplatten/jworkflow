@@ -122,6 +122,23 @@ public interface WorkflowEngine extends EventPublisher, org.jworkflow.routing.Wo
     }
 
     /**
+     * Delivers an application event, with the same effect on every engine. The event starts the latest version of
+     * each workflow whose start event it is, unless an instance with the same business key exists, and is then
+     * delivered to every instance that accepts it and whose business key equals the event's value for the workflow's
+     * {@code correlateBy} field (read from the headers, then the payload, then the event's business key). An event
+     * carrying a workflow instance id, or on a durable engine a {@code workflowKey} header, is routed to that
+     * workflow only. An event no workflow accepts is ignored.
+     *
+     * <p>Returns once the event, and every event published while processing it, has been processed. Called from a
+     * listener or step handler on the engine's own thread, it queues the event and returns at once.</p>
+     * @param event event to deliver
+     * @throws IllegalArgumentException if a workflow it starts has a correlation field the event does not carry
+     * @throws WorkflowInvalidStateException if the engine is closed
+     */
+    @Override
+    void publish(org.jworkflow.events.WorkflowEvent event);
+
+    /**
      * Starts a workflow through the command boundary. Explicit command metadata can request idempotent replay;
      * convenience overloads create default metadata without a replay key.
      * @param command command to validate and execute

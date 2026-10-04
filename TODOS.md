@@ -63,7 +63,7 @@
 - **Dead-letter query:** `WorkflowQueryService.deadLetteredOutbox(destination, afterMessageId, limit)` with keyset paging (`JdbcDeadLetterQueryContractTest`).
 
 All three run on SQLite and in the PostgreSQL contract suite.
-**Completed:** 2026-10-04 (branch `fix/pre-release`)
+**Completed:** 2026-10-04 (merged in PR #3)
 
 ### Engine timestamps follow the injected Clock
 

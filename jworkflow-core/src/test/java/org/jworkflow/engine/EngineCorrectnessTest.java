@@ -92,14 +92,54 @@ class EngineCorrectnessTest {
             if (observations.incrementAndGet() == 1) throw new NoClassDefFoundError("injected");
             received.add(event.metadata().headers().get("eventName"));
         }).build()) {
-            engine.publish(WorkflowEvent.of("alpha.received"));
-            long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
-            while (observations.get() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThrows(NoClassDefFoundError.class, () -> engine.publish(WorkflowEvent.of("alpha.received")),
+                    "the publisher must see the Error");
             engine.publish(WorkflowEvent.of("beta.received"));
-            deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
-            while (received.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
             assertEquals(List.of("beta.received"), received, "the loop must keep processing after an Error");
         }
+    }
+
+    /** Publishes the payment for the order it is invoked for, as an infrastructure listener would. */
+    public static final class PaymentRelay {
+        private final java.util.concurrent.atomic.AtomicReference<WorkflowEngine> engine = new java.util.concurrent.atomic.AtomicReference<>();
+        public void onEvent(WorkflowEvent event) {
+            Object orderId = ((Map<?, ?>) event.message().payload()).get("orderId");
+            engine.get().publish(WorkflowEvent.named("payment.received", Map.of("orderId", orderId)));
+        }
+    }
+
+    @Test void publishReturnsAfterTheEventsItsListenersPublish() {
+        PaymentRelay relay = new PaymentRelay();
+        try (WorkflowEngine engine = WorkflowEngine.builder()
+                .definition(WorkflowDefinitionBuilder.workflow("relay").version("1")
+                        .startWhen("order.placed").correlateBy("orderId")
+                        .step("charge", step -> step.listener("relay", "onEvent").onSuccess("payment.received", "done"))
+                        .end("done"))
+                .listener("relay", relay)
+                .build()) {
+            relay.engine.set(engine);
+            engine.publish(WorkflowEvent.named("order.placed", Map.of("orderId", "o-1")));
+            assertEquals(WorkflowStatus.COMPLETED, engine.snapshot("relay", "o-1").status(),
+                    "the listener's event must be processed before publish returns");
+        }
+    }
+
+    @Test void closingReleasesAWaitingPublisher() throws Exception {
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        WorkflowEngine engine = WorkflowEngine.builder().eventPublisher(event -> {
+            if (!event.eventName().value().equals("event.received")) return;
+            entered.countDown();
+            try { release.await(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        }).build();
+        java.util.concurrent.CompletableFuture<Throwable> outcome = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            try { engine.publish(WorkflowEvent.of("slow.happened")); return null; } catch (Throwable failure) { return failure; }
+        });
+        assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        engine.close();
+        release.countDown();
+        assertInstanceOf(WorkflowInvalidStateException.class, outcome.get(5, java.util.concurrent.TimeUnit.SECONDS),
+                "a publisher must not wait forever on a closed engine");
     }
 
     private static WorkflowEngine engine(WorkflowDefinition... definitions) throws Exception {

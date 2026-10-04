@@ -15,7 +15,7 @@ Every engine is safe to share between threads.
 | Work | In-memory engine | SQLite / PostgreSQL engine |
 | --- | --- | --- |
 | Commands (`start`, `signal`, `retryFailedStep`, `cancel`, `resume`) and their step handlers | Caller's thread | Caller's thread, inside the command's transaction |
-| Events passed to `engine.publish(...)` | Event-loop thread `jworkflow-events` | Caller's thread (routed immediately) |
+| Events passed to `engine.publish(...)` | Event-loop thread `jworkflow-events`; the caller waits until it is processed | Caller's thread |
 | Timeouts and step retries | Event-loop thread `jworkflow-events` | Timer worker `jworkflow-jdbc-timers-*` |
 | Inbox translation and the resulting commands | — | Inbox worker `jworkflow-jdbc-inbox-*`, or the thread calling `pollOnce()` |
 | `DestinationPublisher.publish(...)` | — | Outbox worker `jworkflow-jdbc-outbox-*`, or the thread calling `pollOnce()` |

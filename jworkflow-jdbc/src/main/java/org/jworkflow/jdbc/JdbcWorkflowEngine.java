@@ -16,6 +16,7 @@ import org.jworkflow.internal.persistence.ActiveWorkflowCursor;
 import org.jworkflow.internal.engine.WorkflowTransitionResult;
 import org.jworkflow.internal.engine.WorkflowMutation;
 import org.jworkflow.internal.engine.WorkflowStateMachine;
+import org.jworkflow.internal.engine.EventCorrelation;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.*;
@@ -61,6 +62,8 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         private final JdbcConnectionFactory connections;
         private final JdbcWorkflowPersistence persistence;
     private final WorkflowStateMachine machine;
+    private final WorkflowDefinitionRegistry definitions;
+    private final Map<String,String> starts;
         private final EventPublisher observer;
         private final Map<String,Object> listeners;
     private final WorkflowLifecycleObserver lifecycleObserver;
@@ -105,6 +108,8 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         WorkflowDefinitionRegistry recovered=new WorkflowDefinitionRegistry();
             supplied.snapshot().values().forEach(recovered::register);
         persistence.definitions().findAll().stream().filter(d->recovered.find(d.name(),d.version()).isEmpty()).forEach(recovered::register);
+        this.definitions=recovered;
+        this.starts=Map.copyOf(starts==null?Map.of():starts);
         this.machine=new WorkflowStateMachine(recovered,handlers,conditions,starts,this.listeners,clock);
         recoverStartup();
             startTimerPoller();
@@ -424,10 +429,44 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         WorkflowEventRoute requested;
         if(metadata.workflowInstanceId()!=null)requested=WorkflowEventRoute.exact(metadata.workflowInstanceId(),event.eventName());
         else{String workflowKey=metadata.headers().get("workflowKey");
-        if(workflowKey==null||workflowKey.isBlank())throw new InvalidWorkflowRouteException(WorkflowRoutingOutcome.NO_MATCH,"Correlation routing requires workflowKey metadata");
+        if(workflowKey==null||workflowKey.isBlank()){publishByDefinitions(event);return;}
         requested=metadata.correlationId()!=null&&!metadata.correlationId().isBlank()?WorkflowEventRoute.correlated(workflowKey,metadata.correlationId(),event.eventName()):WorkflowEventRoute.businessKey(workflowKey,metadata.businessKey(),event.eventName());
     }WorkflowRoutingResult result=route(event,requested);
         if(result.outcome()!=WorkflowRoutingOutcome.ROUTED)throw new InvalidWorkflowRouteException(result.outcome(),result.detail());
+    }
+    /**
+     * Delivers an event that names no workflow the way the in-memory engine does: it starts each workflow whose start
+     * event it is, then delivers it to every instance that accepts it and whose correlation field it carries.
+     */
+    private void publishByDefinitions(WorkflowEvent published){
+        WorkflowEvent event=capture(published);
+        Set<WorkflowInstanceId> delivered=new LinkedHashSet<>();
+        for(WorkflowDefinition definition:EventCorrelation.startedBy(definitions,starts,event.eventName().value())){
+            String field=definition.metadata().get("correlateBy");
+            String businessKey=EventCorrelation.correlationValue(field,event);
+            if(businessKey==null)throw new IllegalArgumentException("Published workflow event must include correlation key "+(field==null||field.isBlank()?"businessKey":field));
+            if(persistence.instances().findByBusinessKey(definition.name(),businessKey).isPresent())continue;
+            WorkflowInstanceId started=start(EventCorrelation.startCommand(definition,businessKey,event)).workflowInstanceId();
+            deliver(event,require(started));
+            delivered.add(started);
+        }
+        int limit=recovery.maximumRoutingCandidates+1;
+        for(String workflowKey:definitions.snapshot().values().stream().map(WorkflowDefinition::name).distinct().sorted().toList()){
+            Set<String> businessKeys=new LinkedHashSet<>();
+            definitions.snapshot().values().stream().filter(d->d.name().equals(workflowKey))
+                    .forEach(d->businessKeys.addAll(EventCorrelation.candidateBusinessKeys(d,event)));
+            for(String businessKey:businessKeys){
+                for(WorkflowSnapshot candidate:persistence.instances().findActiveByBusinessKey(workflowKey,businessKey,limit)){
+                    if(!delivered.contains(candidate.instanceId())&&deliver(event,candidate))delivered.add(candidate.instanceId());
+                }
+            }
+        }
+        if(delivered.isEmpty()){observeIncoming(WorkflowLifecycleEventType.EVENT_RECEIVED,event,null);observeIncoming(WorkflowLifecycleEventType.EVENT_IGNORED,event,null);}
+    }
+    private boolean deliver(WorkflowEvent event,WorkflowSnapshot instance){
+        WorkflowDefinition definition=persistence.definitions().findRevision(instance.workflowKey(),instance.workflowVersion(),instance.workflowRevision()).orElse(null);
+        if(definition==null||!instance.businessKey().equals(EventCorrelation.correlationValue(definition,instance,event))||!machineFor(instance).accepts(instance,event))return false;
+        return route(event,WorkflowEventRoute.exact(instance.instanceId(),event.eventName())).outcome()==WorkflowRoutingOutcome.ROUTED;
     }
     /**
      * {@inheritDoc}

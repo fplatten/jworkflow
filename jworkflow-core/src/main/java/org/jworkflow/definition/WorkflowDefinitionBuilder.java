@@ -292,7 +292,8 @@ public final class WorkflowDefinitionBuilder {
         listenerMethod=text(method,"listener method");
         return this;
     }WorkflowNode build(){if(action==null&&listenerId==null)throw invalid("Step "+name+" requires an action or listener");
-        return new WorkflowNode(name,WorkflowNodeType.STEP,action,listenerId,listenerMethod,null,null,null,null,null,null,retry,timeout,transitions,null);
+        // Like the DSL, a listener step without an explicit action is named after the step.
+        return new WorkflowNode(name,WorkflowNodeType.STEP,action==null?name:action,listenerId,listenerMethod,null,null,null,null,null,null,retry,timeout,transitions,null);
     }}
     /**
      * Configures a step attempt budget and fixed retry delay.

@@ -425,8 +425,8 @@ public final class WorkflowEngineBuilder {
     }
 
     /**
-     * Maps an event name to a workflow start in the in-memory runtime. JDBC event routing does not automatically
-     * start new instances.
+     * Starts the latest version of a workflow whenever {@code engine.publish(...)} receives this event, like a
+     * definition's own start event.
      * @param eventName event name matched by workflow transitions or subscribers
      * @param workflowKey registered workflow name used to resolve a definition
      * @return this builder for further configuration

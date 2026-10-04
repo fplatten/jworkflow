@@ -61,6 +61,16 @@ earlier `0.1.0-SNAPSHOT` build to the current one. See the [changelog](../../CHA
 - **More dead-letter events.** `INBOX_DEAD_LETTERED` is now also emitted when lease expiry exhausts a message, and
   the new `OUTBOX_DEAD_LETTERED` covers outbox messages. A `switch` over `WorkflowLifecycleEventType` without a
   `default` branch needs a case for `OUTBOX_DEAD_LETTERED`.
+- **`publish` behaves the same on every engine.** On SQLite and PostgreSQL, an event without a `workflowKey` header
+  now starts workflows whose start event it is and is delivered by the definition's `correlateBy` field, instead of
+  throwing `InvalidWorkflowRouteException`. Events that carry a `workflowKey` header or a workflow instance id are
+  routed exactly as before.
+- **In-memory `publish` waits.** It returns after the event, and the events its listeners publish, have been
+  processed, and throws the first failure (for example a listener exception or a missing correlation field). Code
+  that polled for the outcome still works. Do not hold a lock in the publishing thread that a listener needs. Events
+  published from a listener or step on the engine's own thread are queued, so they never wait.
+- **Java-builder listener steps** without `action(...)` now use the step name as their action, as the DSL does. The
+  definition gets a new revision; instances already running keep their stored revision.
 - **Recorded timestamps follow the injected `Clock`.** Command results, workflow definitions and timers now record
   `created_at`/`updated_at` from the clock passed to `WorkflowEngine.builder().clock(...)` instead of the system clock.
   Engines that use the default clock see no difference. Schema migration history still records system time.
