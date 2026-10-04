@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jworkflow.org/workbench/project-profile-v1.schema.json",
+  "title": "JWorkflow project profile",
+  "type": "object",
+  "required": ["buildSystem", "javaTarget", "coreVersion"],
+  "properties": {
+    "buildSystem": {"enum": ["Maven", "Gradle Groovy", "Gradle Kotlin"]},
+    "javaTarget": {"type": "string"},
+    "coreVersion": {"type": "string"}
+  },
+  "additionalProperties": false
+}

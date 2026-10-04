@@ -1,0 +1,20 @@
+{
+  "rulesetVersion": "m3-rules-1",
+  "description": "Expected results for SharedValidationRules.check and the bundled jworkflow-rules-v1.wasm check export. Both test suites read this file.",
+  "cases": [
+    {"rule": 1, "value": 0, "result": 1001},
+    {"rule": 1, "value": 1, "result": 0},
+    {"rule": 1, "value": 2147483647, "result": 0},
+    {"rule": 2, "value": 0, "result": 0},
+    {"rule": 2, "value": 500, "result": 0},
+    {"rule": 2, "value": 501, "result": 1002},
+    {"rule": 2, "value": 2147483647, "result": 1002},
+    {"rule": 2, "value": -1, "result": 0},
+    {"rule": 3, "value": 10, "result": 0},
+    {"rule": 3, "value": 11, "result": 1003},
+    {"rule": 3, "value": -1, "result": 0},
+    {"rule": 0, "value": 0, "result": 1099},
+    {"rule": 4, "value": 0, "result": 1099},
+    {"rule": -1, "value": 5, "result": 1099}
+  ]
+}

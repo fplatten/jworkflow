@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jworkflow.org/workbench/generation-result-v1.schema.json",
+  "title": "JWorkflow Workbench saved-revision generation result",
+  "type": "object",
+  "required": ["documentId", "revision", "documentHash", "rulesetVersion", "diagnostics", "sharedRules", "groovy", "sourceMap", "compatibility", "replacement", "replacementHash", "state"],
+  "properties": {
+    "documentId": {"type": "string"},
+    "revision": {"type": "integer", "minimum": 1},
+    "documentHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rulesetVersion": {"const": "m3-rules-1"},
+    "state": {"enum": ["ready", "blocked"]},
+    "diagnostics": {"type": "array", "items": {"type": "object", "required": ["code", "severity", "message", "correction", "blockId", "field"], "properties": {"code": {"type": "string"}, "severity": {"enum": ["error", "warning"]}, "message": {"type": "string"}, "correction": {"type": "string"}, "blockId": {"type": "string"}, "field": {"type": "string"}}}},
+    "sharedRules": {"type": "array", "items": {"type": "object", "required": ["rule", "location", "value", "result"]}},
+    "groovy": {"type": "string"},
+    "sourceMap": {"type": "array", "items": {"type": "object", "required": ["blockId", "startLine", "endLine"], "properties": {"blockId": {"type": "string"}, "startLine": {"type": "integer", "minimum": 1}, "endLine": {"type": "integer", "minimum": 1}}}},
+    "compatibility": {"type": "object", "required": ["coreVersion", "format", "javaTarget"]},
+    "replacement": {"type": "boolean"},
+    "replacementHash": {"type": "string"}
+  },
+  "additionalProperties": false
+}

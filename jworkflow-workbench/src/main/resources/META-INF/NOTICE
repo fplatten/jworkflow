@@ -1,0 +1,17 @@
+JWorkflow Workbench
+Licensed under the Apache License, Version 2.0 (META-INF/LICENSE).
+
+This application bundles third-party software. Principal components and their licenses:
+
+- Blockly (Apache License 2.0) - static/vendor/blockly*.js, license in static/vendor/blockly-LICENSE.txt
+- xterm.js (MIT License) - static/vendor/xterm.*, license in static/vendor/xterm-LICENSE.txt
+- Spring Framework, Spring Boot, Spring AI and Spring Shell (Apache License 2.0)
+- Jackson (Apache License 2.0)
+- Apache Groovy (Apache License 2.0), used by jworkflow-core
+- Apache Tomcat embedded (Apache License 2.0)
+- Project Reactor (Apache License 2.0)
+- OpenAI Java SDK (Apache License 2.0), pulled in by Spring AI
+- Java Native Access, JNA and JNA Platform (Apache License 2.0 or LGPL 2.1, used under Apache License 2.0)
+
+The complete list of bundled libraries (BOOT-INF/lib) is published next to each release JAR as THIRD-PARTY.txt.
+Each library's own license file is included in its JAR where its authors provide one.

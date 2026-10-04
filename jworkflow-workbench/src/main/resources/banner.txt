@@ -1,0 +1,2 @@
+﻿JWorkflow Workbench
+Browser terminal foundation. /help for commands; /exit to shut down.

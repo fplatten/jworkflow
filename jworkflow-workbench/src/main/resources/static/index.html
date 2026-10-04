@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JWorkflow Workbench</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/vendor/xterm.css"><link rel="stylesheet" href="/workbench.css">
+<script defer src="/vendor/blockly.js"></script><script defer src="/vendor/blockly-en.js"></script>
+<script defer src="/vendor/xterm.js"></script><script type="module" src="/terminal.js"></script></head>
+<body><header><h1>JWorkflow Workbench</h1><span id="document-state">No project</span></header>
+<p id="status" role="status">Connecting to your local workbench…</p>
+<details id="project-panel" open><summary>Project and workflow settings</summary><div class="project-content">
+  <form id="project-form"><label>Project root <input id="project-root" required autocomplete="off"></label><button>Confirm project</button></form>
+  <p id="project-hint">No project files are read until you confirm this path.</p>
+  <div id="project-details" hidden>
+    <dl><dt>Build</dt><dd id="build-system"></dd><dt>Java</dt><dd id="java-target"></dd><dt>JWorkflow core</dt><dd id="core-version"></dd></dl>
+    <div class="settings-grid"><label>Java package <input id="java-package"></label><label>Workflow output <input id="workflow-output" value="src/main/resources/workflows"></label></div>
+    <div class="actions"><button id="confirm-settings" type="button">Confirm packages and output</button><button id="refresh" type="button">Refresh discovery</button></div>
+    <p id="discovery-status" role="status"></p><details><summary>Discovered commands, events and listeners</summary><div id="bindings" class="bindings"></div></details>
+    <div class="settings-grid workflow-fields"><label>Workflow name <input id="workflow-name" autocomplete="off"></label><label>Engine ID <input id="engine-id" autocomplete="off"></label><label>Version <input id="workflow-version" autocomplete="off"></label></div>
+    <div class="actions"><button id="review-gitignore" type="button">Review .gitignore change</button><button id="apply-gitignore" type="button" hidden>Approve .gitignore change</button></div><pre id="gitignore-diff" hidden></pre>
+  </div>
+</div></details>
+<main id="authoring" hidden>
+  <nav class="toolbar" aria-label="Workflow editor actions">
+    <button id="save-draft" type="button">Save</button><button id="generate" type="button" class="primary">Generate</button><span class="separator"></span>
+    <label class="insert-label">Add block <select id="insert-type"><option value="workflow_step">Step</option><option value="workflow_branch">Branch</option><option value="workflow_end">End</option><option value="workflow_start">Start</option></select></label><button id="insert-block" type="button" title="Inserts after the selected block, or at the end of the Start block">Insert</button><span class="separator"></span>
+    <button id="undo" type="button">Undo</button><button id="redo" type="button">Redo</button><button id="duplicate" type="button">Duplicate selected</button><button id="delete-block" type="button">Delete selected</button><button id="fit" type="button">Fit</button>
+    <label class="search-label">Find block <input id="block-search" type="search" placeholder="Name or action"><button id="find-block" type="button">Find</button></label>
+  </nav>
+  <p id="save-status" class="state-line" role="status">No saved draft yet.</p>
+  <div class="editor-layout">
+    <section class="canvas-panel" aria-labelledby="canvas-title"><h2 id="canvas-title" class="sr-only">Workflow canvas</h2><div id="blockly-editor" aria-label="Workflow block editor"></div></section>
+    <aside class="side-panel"><section><h2>Inspector</h2><div id="inspector"><p>Select a block to inspect it.</p></div></section>
+      <section><h2>Problems <span id="problem-state" class="badge">Not generated</span></h2><div id="problems" role="list"><p>Generate to validate the saved workflow.</p></div><p id="wasm-status" class="muted"></p></section>
+    </aside>
+  </div>
+  <section class="preview-panel"><h2>Generated Groovy preview <span id="preview-state" class="badge">Empty</span></h2><p id="replacement-status" class="muted"></p><pre id="groovy-preview" tabindex="0" aria-label="Read-only generated Groovy preview"></pre></section>
+  <section class="preview-panel" id="changes-panel" aria-labelledby="changes-title"><h2 id="changes-title">Source changes <span id="changes-state" class="badge">Not reviewed</span></h2>
+    <p id="changes-status" class="muted" role="status">Generate a valid workflow, then review the complete source change set. Nothing is written until you approve it.</p>
+    <div class="actions"><button id="review-changes" type="button" disabled>Review source changes</button><button id="review-revert" type="button" hidden>Review revert of last applied change</button></div>
+    <div id="changes-review" hidden><div id="changes-summary"></div>
+      <label id="manual-groovy-row" class="inspector-row inline" hidden><input type="checkbox" id="replace-manual-groovy"> Replace the manually edited Groovy file with the generated definition</label>
+      <div id="changes-files"></div>
+      <div class="actions"><button id="approve-changes" type="button" class="primary">Approve and apply all</button><button id="reject-changes" type="button">Reject</button></div></div>
+  </section>
+  <section class="preview-panel" id="assistant-panel" aria-labelledby="assistant-title"><h2 id="assistant-title">Assistant <span id="ai-state" class="badge">Unavailable</span></h2>
+    <p id="ai-status" class="muted" role="status">Type a message in the terminal to ask the assistant. Nothing is shared until you choose it below.</p>
+    <div id="ai-proposal" hidden><h3>Proposed block changes</h3><p id="ai-proposal-summary"></p><ul id="ai-proposal-preview" class="change-list"></ul>
+      <div class="actions"><button id="ai-approve" type="button" class="primary">Approve and apply to editor</button><button id="ai-reject" type="button">Reject</button></div></div>
+    <p id="ai-proposal-status" class="muted" role="status"></p>
+    <div class="assistant-grid"><div><h3>Shared with the assistant this session</h3>
+      <label class="inspector-row inline"><input type="checkbox" id="ai-share-workflow"> Current workflow blocks and discovered command names</label>
+      <label>Filter project files <input id="ai-file-filter" type="search" placeholder="Path contains"></label><div id="ai-files" class="ai-files"></div><p id="ai-files-note" class="muted"></p></div>
+      <div><h3>Conversations</h3><p id="ai-current" class="muted"></p><div class="actions"><button id="ai-new" type="button">New conversation</button></div><ul id="ai-conversations" class="change-list"></ul></div></div>
+  </section>
+  <section class="preview-panel" id="build-panel" aria-labelledby="build-title"><h2 id="build-title">Build and test <span id="build-state" class="badge">Disabled</span></h2>
+    <p id="build-status" class="muted" role="status">/build and /test run only inside an OS sandbox that Workbench has proven on this machine for this project. Nothing runs without your approval of the exact command.</p>
+    <div id="build-setup"></div>
+    <label id="grant-row" class="inspector-row inline" hidden><input type="checkbox" id="grant-project"> <span id="grant-text"></span></label>
+    <div class="actions"><button id="run-self-test" type="button">Run confinement self-test</button><button id="cancel-command" type="button" hidden>Cancel running command</button><button id="share-output" type="button" hidden>Share output with the assistant…</button></div>
+    <div id="excerpt-review" hidden><h3>Build output to share</h3><p class="muted">This exact text (secrets redacted) is sent with your <strong>next assistant message only</strong>. It is never saved, and sharing files does not include it.</p><p id="excerpt-meta" class="muted"></p><pre id="excerpt-text" class="command-line" tabindex="0" aria-label="Build output excerpt"></pre>
+      <div class="actions"><button id="approve-excerpt" type="button" class="primary">Share with my next message</button><button id="cancel-excerpt" type="button">Do not share</button></div></div>
+    <div id="command-review" hidden><h3>Command awaiting approval</h3><dl id="command-details" class="command-details"></dl><pre id="command-line" class="command-line" tabindex="0"></pre>
+      <div class="actions"><button id="approve-command" type="button" class="primary">Approve and run this command</button><button id="deny-command" type="button">Deny</button></div></div>
+  </section>
+  <section class="preview-panel" aria-labelledby="plan-title"><h2 id="plan-title">Integration plan <span class="muted">.jworkflow/integration-plan.md</span></h2><pre id="integration-plan" tabindex="0" aria-label="Integration plan"></pre></section>
+</main>
+<section class="terminal-panel"><h2>Terminal</h2><div id="terminal" aria-label="Workflow terminal"></div></section>
+<dialog id="exit-dialog" aria-labelledby="exit-title"><h2 id="exit-title">Unsaved workflow changes</h2><p>Save the current draft before shutting down Workbench?</p><div class="actions"><button id="exit-save" class="primary">Save and exit</button><button id="exit-discard">Discard and exit</button><button id="exit-cancel">Cancel</button></div><p id="exit-error" role="alert"></p></dialog>
+<footer>Use <code>/help</code> for commands. <code>/exit</code> shuts down Workbench. <a href="/guide.html" target="_blank" rel="noopener">Open the guide</a> (works offline).</footer></body></html>

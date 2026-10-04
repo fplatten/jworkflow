@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JWorkflow Workbench guide</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/workbench.css"></head>
+<body class="guide"><header><h1>JWorkflow Workbench guide</h1><span>Version 0.1.0 · works offline</span></header>
+<nav aria-label="Guide sections"><p><a href="#start">Start</a> · <a href="#quickstart">Quickstart</a> · <a href="#commands">Commands</a> · <a href="#assistant">Assistant</a> · <a href="#build">Build and test</a> · <a href="#files">Files</a> · <a href="#recovery">Recovery</a> · <a href="#integration">Wiring your code</a> · <a href="#limits">Limits</a></p></nav>
+<main>
+<p>Workbench helps you create one JWorkflow workflow in an existing Java project. You draw the workflow with blocks. Workbench validates it, generates the Groovy definition and Java listener/command sources, and shows every source change for your approval before writing it. Your own services stay yours: Workbench never wires them for you.</p>
+
+<h2 id="start">Start</h2>
+<ul>
+<li><strong>You need:</strong>
+  <ul>
+  <li>JDK 21 or later</li>
+  <li>Chrome or Edge</li>
+  <li>Windows 10/11 x64 or macOS on Apple Silicon</li>
+  <li>a single-module Maven or Gradle project targeting Java 17 or later, using <code>org.jworkflow:jworkflow-core:0.1.0-SNAPSHOT</code></li>
+  </ul>
+  Node and a database are not needed.</li>
+<li><strong>Run</strong> <code>java -jar jworkflow-workbench-0.1.0.jar</code>, optionally followed by your project folder (for example <code>java -jar jworkflow-workbench-0.1.0.jar .</code> from inside it). Your default browser opens.
+  <ul>
+  <li>The project folder is only a suggestion; nothing is read until you confirm it.</li>
+  <li>Workbench listens only on 127.0.0.1 and uses a one-time link; the tab that opens it owns the session. Closing that tab or typing <code>/exit</code> stops Workbench.</li>
+  <li>If the browser does not open, run Workbench in a terminal; it prints a one-time local address instead (<code>--workbench.browser.enabled=false</code> does this on purpose).</li>
+  </ul></li>
+<li><strong>Windows paths:</strong> the <code>java</code> launcher cannot pass characters outside your system code page (for example <code>漢字</code>) as arguments. If the JAR or project path contains them, start Workbench from inside that folder with relative paths.</li>
+</ul>
+
+<h2 id="quickstart">Quickstart (about ten minutes)</h2>
+<ol>
+<li><strong>Confirm the project.</strong> Enter the project folder and choose <strong>Confirm project</strong>. Workbench shows the build system, Java target, core version and the commands, events and listeners it found in <code>src/main/java</code>.</li>
+<li><strong>Confirm packages and output.</strong> Check the Java package for generated classes and the workflow folder (default <code>src/main/resources/workflows</code>), then choose <strong>Confirm packages and output</strong>.</li>
+<li><strong>Name it.</strong> Enter a workflow name and version; the engine ID follows the name. Optionally review the <code>.gitignore</code> change for <code>.jworkflow/</code>.</li>
+<li><strong>Build the flow</strong> with <strong>Add block</strong> (keyboard) or by dragging from the palette:
+  <ul>
+  <li>Start names the first node.</li>
+  <li>A step runs a command and names its success and failure targets.</li>
+  <li>A branch compares a workflow variable.</li>
+  <li>An end completes the workflow.</li>
+  </ul>
+  The inspector edits every field, and the <strong>Blocks</strong> list selects any block.</li>
+<li><strong>Save</strong> whenever you like; incomplete drafts are fine. Nothing is saved automatically.</li>
+<li><strong>Generate</strong> saves, validates the saved draft and shows the Groovy preview. Errors block generation and warnings do not. Select a problem to jump to its field. A step may name a command that does not exist yet; Workbench will propose creating it.</li>
+<li><strong>Review source changes.</strong> Choose <strong>Review source changes</strong> to see every file and its full diff, then approve or reject the whole set. Nothing is written before approval.</li>
+<li><strong>Wire it up.</strong> Read the <strong>Integration plan</strong> (also saved as <code>.jworkflow/integration-plan.md</code>) and add the wiring it shows to your application.</li>
+</ol>
+
+<h2 id="commands">Terminal commands</h2>
+<p>Commands must match exactly. Any other text is sent to the assistant.</p>
+<ul>
+<li><code>/help</code>: lists the commands.</li>
+<li><code>/core</code>: shows the supported core version.</li>
+<li><code>/clear</code>: deletes the current conversation and starts a new one. It is refused while an AI request runs.</li>
+<li><code>/build</code>: proposes a confined, offline build without tests.</li>
+<li><code>/test</code>: proposes the full configured test suite, confined and offline.</li>
+<li><code>/cancel</code>:
+  <ul>
+  <li>During an AI request, it stops the request and deletes that conversation.</li>
+  <li>During a build or test, it stops every process it started.</li>
+  <li>Otherwise it reports that nothing is running.</li>
+  </ul></li>
+<li><code>/exit</code>: offers to save unsaved changes, stops running builds, then shuts down.</li>
+<li><kbd>Ctrl</kbd>+<kbd>C</kbd>: copies the terminal selection; it never cancels.</li>
+</ul>
+<p>Only one operation runs at a time (an AI request, a build or a test). Other requests are refused, never queued.</p>
+
+<h2 id="assistant">Assistant</h2>
+<ul>
+<li><strong>Availability:</strong> works only when <code>OPENAI_API_KEY</code> is set in the environment that starts Workbench. The key is read when a request is sent and never stored or shown. Without it, everything else works.</li>
+<li><strong>Model and data:</strong> requests go to the OpenAI Responses API, model <code>gpt-6-astra</code>, with <code>store=false</code>. Retention otherwise follows your OpenAI account terms. A request contains:
+  <ul>
+  <li>your message</li>
+  <li>this conversation's earlier messages</li>
+  <li>only what you share in the Assistant panel for this session: the current workflow and command names, and files you tick</li>
+  </ul>
+  Secret-looking, ignored, binary and build files are never offered. Sharing ends when Workbench stops or the project changes, and is not restored when you resume a conversation.</li>
+<li><strong>What it can do:</strong> answer, and propose block edits. You see a preview and approve or reject the whole proposal; an approved proposal is one change that Undo reverts. It cannot read files, run commands or write sources. Source changes always go through Generate and the reviewed diff.</li>
+<li><strong>Conversations</strong> are saved in <code>.jworkflow/conversations/</code> until you delete them. Requests stop after 10 minutes; a partial reply is kept and marked incomplete.</li>
+</ul>
+
+<h2 id="build">Build and test</h2>
+<ul>
+<li><strong>Confinement first:</strong> <code>/build</code> and <code>/test</code> run only inside an operating-system sandbox. Before the first run, use <strong>Run confinement self-test</strong> in the Build and test panel. It proves on your machine, for this project, that the sandboxed build:
+  <ul>
+  <li>cannot read or write outside the project</li>
+  <li>cannot change your caches or reach the network</li>
+  <li>cannot keep processes running after it ends</li>
+  </ul></li>
+<li><strong>Windows:</strong> the sandbox is an AppContainer. Workbench asks before giving it access to your project folder. It never changes other folders; if the self-test reports a tool or cache folder as unreadable, it prints the exact <code>icacls</code> command for you to run, for example for your Maven installation and <code>%USERPROFILE%\.m2\repository</code>. In this version, <code>/build</code> and <code>/test</code> support Maven projects only on Windows; build Gradle projects yourself.</li>
+<li><strong>macOS:</strong> the sandbox is <code>sandbox-exec</code>. It is enabled only after its self-test passes on your Mac.</li>
+<li><strong>Offline, read-only caches:</strong> builds run offline and never download. Your Maven or Gradle caches are read-only; anything new goes to <code>.jworkflow/</code>. If a dependency is missing, run your build once yourself (outside Workbench, with network access), then retry.</li>
+<li><strong>Approval every time:</strong> every run shows the exact command, folders, environment and 10-minute limit, and runs only after you approve it.</li>
+<li><strong>Output:</strong> streams to the terminal and is not saved. The integration plan records only the outcome and whether it still matches your current sources. Source apply and revert wait until a build or test finishes.</li>
+</ul>
+
+<h2 id="files">Files Workbench writes</h2>
+<p>Everything is inside your project's <code>.jworkflow/</code> folder except the approved source changes and the path of the last project (kept in your user settings):</p>
+<ul>
+<li><code>workflow.jworkflow.json</code>: the workflow</li>
+<li><code>integration-plan.md</code>: the integration plan</li>
+<li><code>applied.json</code>: what Workbench last wrote</li>
+<li><code>backup/</code>: the latest revert point</li>
+<li><code>conversations/</code>: saved conversations</li>
+<li><code>verification.json</code>: the last build/test outcome</li>
+<li><code>m2/</code>, <code>gradle-home/</code>, <code>tmp/</code>: sandboxed build data</li>
+</ul>
+
+<h2 id="recovery">Recovery and undo</h2>
+<ul>
+<li><strong>Interrupted writes:</strong> source changes are written all-or-nothing. If Workbench stops while writing, the next time you confirm the project it restores every file. If you edited one of those files meanwhile, it keeps the journal and tells you which file to check.</li>
+<li><strong>Revert:</strong> <strong>Review revert of last applied change</strong> undoes the latest applied set after you approve its reverse diff. It is refused if you have edited those files since.</li>
+<li><strong>Your own code is protected:</strong> Workbench never changes Java you wrote. A generated listener is updated only while you have not edited it, and a Groovy file you edited is replaced only after you confirm.</li>
+<li><strong>Undo</strong> covers editor changes in this session only; it never touches files or conversations.</li>
+</ul>
+
+<h2 id="integration">Wiring your code</h2>
+<ul>
+<li><strong>Per step action:</strong> each step action gets a listener (<code>&lt;Command&gt;Listener</code>, a <code>StepHandler</code>) that builds the command from the step's data and passes it to a service method you supply. Missing commands are created as records you can extend. Register them as the integration plan shows:</li>
+</ul>
+<pre>WorkflowEngine engine = WorkflowEngine.builder()
+        .definitions(new ClasspathWorkflowDefinitionSource(List.of("workflows/order-flow.groovy")))
+        .stepHandler("ChargeCard", new ChargeCardListener(payments::charge))
+        .build();</pre>
+<ul>
+<li><strong>Running steps:</strong> a step runs when its workflow instance receives an event or signal, not when the instance is created, and each step in a sequence needs its own signal. Start instances with <code>engine.start(...)</code> and deliver the events that drive each step.</li>
+<li><strong>Renames:</strong> if you rename the workflow, the old Groovy file and old engine ID are listed for you to clean up; Workbench never deletes them.</li>
+</ul>
+
+<h2 id="limits">Limits in this version</h2>
+<ul>
+<li>One workflow per project.</li>
+<li>Blocks: start, step, two-way branch and end, up to 500 blocks. Generate takes a few seconds at that size, mostly core compilation.</li>
+<li>Workbench never generates Spring annotations, services, dispatchers or build changes.</li>
+<li>No import, export or Save As.</li>
+<li>On Windows, <code>/build</code> and <code>/test</code> support Maven only.</li>
+</ul>
+<p><a href="/">Back to Workbench</a></p>
+</main></body></html>
