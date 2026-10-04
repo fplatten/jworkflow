@@ -1,4 +1,7 @@
 package org.jworkflow.dsl;
+import org.jworkflow.model.ListenerInvocation;
+import org.jworkflow.model.ListenerArgument;
+import org.jworkflow.internal.model.DefinitionValidator;
 
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.AnnotatedNode;

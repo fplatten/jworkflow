@@ -38,6 +38,32 @@
 **Priority:** P3
 **Depends on:** None
 
+## API
+
+### Remove or wire up the in-process event bus
+
+**What:** `EventBus`, `InMemoryEventBus`, `EventSubscriber`, `EventSubscription`, `EventListener`, `SubscribeTo` and related types (now in `org.jworkflow.internal.events`) aren't used by any engine, example or doc.
+
+**Why:** Unused code still has to be maintained and covered by tests, and it suggests a feature that doesn't exist.
+
+**Context:** Found during the 0.1.0 API review (`docs/api-review-0.1.0.md`, local). Decide whether it's a planned feature (then wire it in and document it) or dead code (then delete it). It's internal now, so either choice is non-breaking.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### Replace the reflective JDBC engine bridge
+
+**What:** `WorkflowEngineBuilder` creates JDBC engines by calling the package-private `JdbcWorkflowEngine.create(...)` through `getDeclaredMethod` + `setAccessible`, so core needs no compile-time dependency on jworkflow-jdbc.
+
+**Why:** It works on the classpath, which is what jworkflow supports today. But it would break under JPMS strong encapsulation, and the 17-parameter signature is matched by reflection only (a mismatch shows up at runtime, as an `IllegalStateException`).
+
+**Context:** If `module-info.java` is ever added, replace it with an internal `ServiceLoader` SPI: an interface in `org.jworkflow.internal.engine`, implemented in jworkflow-jdbc. Covered today by `WorkflowEngineBuilderTest` and every JDBC contract test.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** A decision to support the module path
+
 ## Persistence
 
 ### SQLite command replay parity with PostgreSQL

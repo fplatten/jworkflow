@@ -1,5 +1,6 @@
 package org.jworkflow.jdbc;
 
+import org.jworkflow.internal.outbox.*;
 import org.jworkflow.engine.*;import org.jworkflow.events.*;import org.jworkflow.model.*;import org.jworkflow.outbox.*;
 import java.nio.file.*;import java.sql.*;import java.time.*;import java.util.*;import java.util.concurrent.*;import java.util.concurrent.atomic.*;
 

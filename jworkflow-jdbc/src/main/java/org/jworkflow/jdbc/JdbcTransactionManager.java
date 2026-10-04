@@ -1,4 +1,7 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.persistence.WorkflowTransactionalWork;
+import org.jworkflow.internal.persistence.WorkflowTransactionManager;
+import org.jworkflow.internal.persistence.WorkflowTransaction;
 
 import org.jworkflow.persistence.*;
 import java.sql.Connection;
@@ -18,7 +21,7 @@ import java.util.function.Consumer;
  * be idle and auto-commit enabled. Changed state is restored and connections close before queued callbacks run.
  * Callback failure cannot undo a committed result. Unrelated host/JTA transactions are not enlisted.</p>
  */
-public final class JdbcTransactionManager implements WorkflowTransactionManager {
+final class JdbcTransactionManager implements WorkflowTransactionManager {
     private final JdbcConnectionFactory connectionFactory;
     private final ThreadLocal<TransactionState> state = new ThreadLocal<>();
     private final ThreadLocal<ArrayDeque<Runnable>> completing = new ThreadLocal<>();

@@ -1,4 +1,5 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.persistence.CommandResultRecord;
 
 import org.jworkflow.events.EventMessage;
 import org.jworkflow.inbox.*;

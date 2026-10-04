@@ -1,4 +1,7 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.model.WorkflowTimerStatus;
+import org.jworkflow.internal.model.WorkflowTimer;
+import org.jworkflow.internal.persistence.ActiveWorkflowCursor;
 
 import org.jworkflow.events.*;
 import org.jworkflow.inbox.*;
@@ -227,7 +230,7 @@ class ValuesPostgresIT {
             statement.setString(1,id.toString()); try(ResultSet rows=statement.executeQuery()) { assertTrue(rows.next()); assertEquals(PostgresqlInstantCodec.encode(expected),rows.getBigDecimal(1)); }
         }
     }
-    private static void assertExpiredClaims(JdbcWorkflowPersistence persistence, Instant next, org.jworkflow.model.WorkflowTimer timer, InboxMessage inbox, OutboxMessage outbox) {
+    private static void assertExpiredClaims(JdbcWorkflowPersistence persistence, Instant next, org.jworkflow.internal.model.WorkflowTimer timer, InboxMessage inbox, OutboxMessage outbox) {
             assertEquals(1,persistence.timers().releaseExpiredClaims(next));
             assertEquals(1,persistence.inbox().releaseExpiredClaims(next));
             assertEquals(1,persistence.outbox().releaseExpiredClaims(next));

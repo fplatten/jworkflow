@@ -292,8 +292,8 @@ class OperationsPostgresIT {
         try(var statement=c.prepareStatement(sql)) {statement.setString(1,new JdbcJsonCodec().write(payload));statement.executeUpdate();}
     }
     private static void execute(Connection c,String sql)throws SQLException {try(var s=c.createStatement()){s.execute(sql);}}
-    private static void assertActivePagination(org.jworkflow.persistence.WorkflowInstanceRepository instances) {
-                org.jworkflow.persistence.ActiveWorkflowCursor cursor=null;
+    private static void assertActivePagination(org.jworkflow.internal.persistence.WorkflowInstanceRepository instances) {
+                org.jworkflow.internal.persistence.ActiveWorkflowCursor cursor=null;
                 Set<WorkflowInstanceId> visited=new HashSet<>();
                 while(true) {
                     var page=instances.findActiveAfter(cursor,128);assertTrue(page.size()<=128);
@@ -302,7 +302,7 @@ class OperationsPostgresIT {
                         assertEquals(123456789,snapshot.updatedAt().getNano());
                     }
                     if(page.size()<128)break;
-                    var last=page.get(page.size()-1);cursor=new org.jworkflow.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
+                    var last=page.get(page.size()-1);cursor=new org.jworkflow.internal.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
                 }
                 assertEquals(10000,visited.size());
     }

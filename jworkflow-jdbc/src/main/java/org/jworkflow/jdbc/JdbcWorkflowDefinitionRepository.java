@@ -4,7 +4,7 @@ import org.jworkflow.engine.WorkflowInfrastructureException;
 import org.jworkflow.model.WorkflowDefinition;
 import org.jworkflow.persistence.PersistenceConstraintException;
 import org.jworkflow.persistence.PersistenceSerializationException;
-import org.jworkflow.persistence.WorkflowDefinitionRepository;
+import org.jworkflow.internal.persistence.WorkflowDefinitionRepository;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;

@@ -1,4 +1,5 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.engine.InMemoryWorkflowEngine;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.EventName;

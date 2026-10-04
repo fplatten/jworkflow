@@ -66,7 +66,7 @@ WorkflowEngine.instance().start("order", "order-1", Map.of());
 
 - `WorkflowEngine.instance()` throws if no engine is installed.
 - `setInstance(...)` (and `buildAndSetInstance()`) throw if one is already installed. Use
-  `WorkflowEngines.replaceInstance(...)` to swap deliberately.
+  `WorkflowEngine.replaceInstance(...)` to swap deliberately.
 - The holder does not own the engine. `WorkflowEngine.clearInstance()` does not close it: close the engine yourself,
   then clear the reference.
 

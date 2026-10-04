@@ -1,6 +1,9 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.routing.RouteWorkflowEventCommand;
+import org.jworkflow.inbox.InboxInsertResult;
+import org.jworkflow.inbox.InboxAttempt;
+import org.jworkflow.internal.inbox.InboxRoutingTranslator;
 
-import org.jworkflow.application.Command;
 import org.jworkflow.engine.*;
 import org.jworkflow.events.*;
 import org.jworkflow.inbox.*;

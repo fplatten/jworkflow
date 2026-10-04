@@ -1,9 +1,10 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.model.WorkflowDefinitionRegistry;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.model.*;
-import org.jworkflow.events.NoOpEventPublisher;
-import org.jworkflow.observability.NoOpWorkflowLifecycleObserver;
+import org.jworkflow.internal.events.NoOpEventPublisher;
+import org.jworkflow.internal.observability.NoOpWorkflowLifecycleObserver;
 import org.jworkflow.security.CaptureAllEventPolicy;
 import org.junit.jupiter.api.*;
 import org.postgresql.ds.PGSimpleDataSource;

@@ -16,6 +16,7 @@ For a runnable PostgreSQL walkthrough, see the [environment-configured restart d
 
 ## Documentation
 
+- [Supported API](docs/guide/supported-api.md): what is covered by semantic versioning from 0.1.0.
 - [Operations](docs/guide/operations.md): background workers, settings, migrations, leases and recovery.
 - [Threading and lifecycle](docs/guide/threading-and-lifecycle.md): which threads run your code, closing engines, the process-wide engine.
 - [Groovy DSL reference](docs/guide/dsl-reference.md).
@@ -172,7 +173,7 @@ workflow("employee-onboarding") {
 }
 ```
 
-Load definitions and register infrastructure listeners through the builder. `build()` declares the checked `ClassNotFoundException`, thrown when a durable engine's JDBC driver is missing, so the snippets in this README assume an enclosing method that declares `throws Exception` (or catches it):
+Load definitions and register infrastructure listeners through the builder. `build()` throws an unchecked `IllegalStateException` when the configuration is invalid or a durable engine's `jworkflow-jdbc` module or JDBC driver is missing; the message names the missing dependency:
 
 ```java
 WorkflowEngine engine = WorkflowEngine.builder()

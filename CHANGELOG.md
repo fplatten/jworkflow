@@ -55,6 +55,21 @@ All notable changes are recorded here. The project has not been released yet; ve
   misspelled `start at:` node.
 - Emit-only timeouts now emit their event and keep the workflow in place; the DSL accepts `timeout "...", emit: "..."`.
 - `WorkflowMutation` gains `createdInstances`; the previous constructor remains.
+- **Supported API defined.** Engine plumbing, persistence ports, inbox/outbox processing services, event-status
+  storage, the in-process event bus and other implementation types moved to `org.jworkflow.internal.*` packages,
+  which are not supported API and may change in any release. See
+  [Supported API](docs/guide/supported-api.md) and [upgrading](docs/guide/upgrading.md#package-moves-for-010).
+- `WorkflowEngineBuilder.build()`, `buildAndSetInstance()` and `WorkflowEngine.create(...)` no longer declare the
+  checked `ClassNotFoundException`; a missing `jworkflow-jdbc` module or JDBC driver now raises
+  `IllegalStateException` with the same message.
+- `WorkflowEngine.builder()` is the only supported way to create engines: the `JdbcWorkflowEngine.create(...)`
+  factories and `WorkflowEngineBuilder.persistence(...)` are no longer public, and `JdbcWorkflowPersistence`,
+  `JdbcTransactionManager` and `JdbcInboxEventAdapter` are package-private.
+- The process-wide engine is managed only through `WorkflowEngine.instance()`, `setInstance()`, `replaceInstance()`
+  (new) and `clearInstance()`; the duplicate `WorkflowEngines` class moved to an internal package.
+- `PendingTimerView.from(...)` was removed (it took an internal timer type).
+- The `HelloWorld` example moved from `jworkflow-core` to `jworkflow-example` (`org.jworkflow.example.HelloWorld`),
+  so the core jar no longer ships example code.
 
 ### Added
 

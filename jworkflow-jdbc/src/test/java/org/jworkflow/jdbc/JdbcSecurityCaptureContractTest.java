@@ -1,4 +1,5 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.inbox.InboxInsertResult;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.*;

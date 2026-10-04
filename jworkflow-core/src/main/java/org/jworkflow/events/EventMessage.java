@@ -2,7 +2,7 @@ package org.jworkflow.events;
 
 
 import java.util.Map;
-import org.jworkflow.model.ImmutableData;
+import org.jworkflow.internal.model.ImmutableData;
 
 /**
  * Payload, media/schema metadata and redaction state shared by inbox, outbox and workflow events. Construction

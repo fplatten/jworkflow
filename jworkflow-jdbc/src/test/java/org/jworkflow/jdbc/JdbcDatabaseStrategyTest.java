@@ -100,11 +100,6 @@ class JdbcDatabaseStrategyTest {
         }
         var missingConnection = WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL);
         assertThrows(IllegalStateException.class, missingConnection::build);
-        var unsupportedPersistence = WorkflowEngine.builder().type(WorkflowEngine.Type.POSTGRESQL)
-                .jdbcUrl("jdbc:unused").persistence((org.jworkflow.persistence.WorkflowPersistence) Proxy.newProxyInstance(
-                        getClass().getClassLoader(), new Class<?>[]{org.jworkflow.persistence.WorkflowPersistence.class},
-                        (p,m,a) -> null));
-        assertThrows(IllegalStateException.class, unsupportedPersistence::build);
     }
 
     static DataSource source(Connection connection) {

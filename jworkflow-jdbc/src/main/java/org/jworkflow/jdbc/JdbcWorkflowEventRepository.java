@@ -3,7 +3,7 @@ package org.jworkflow.jdbc;
 import org.jworkflow.engine.WorkflowInfrastructureException;
 import org.jworkflow.events.*;
 import org.jworkflow.model.WorkflowInstanceId;
-import org.jworkflow.persistence.WorkflowEventRepository;
+import org.jworkflow.internal.persistence.WorkflowEventRepository;
 
 import java.sql.*;
 import java.time.Instant;

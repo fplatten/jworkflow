@@ -1,4 +1,6 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.persistence.WorkflowTransactionManager;
+import org.jworkflow.internal.persistence.WorkflowTransaction;
 
 import org.jworkflow.engine.WorkflowEngine;
 import org.jworkflow.persistence.*;

@@ -1,9 +1,11 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.model.WorkflowTimerStatus;
+import org.jworkflow.internal.model.WorkflowTimer;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.EventName;
 import org.jworkflow.model.*;
-import org.jworkflow.persistence.CommandResultRecord;
+import org.jworkflow.internal.persistence.CommandResultRecord;
 
 import java.math.BigDecimal;
 import java.nio.file.Files;

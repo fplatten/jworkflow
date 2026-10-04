@@ -1,31 +1,30 @@
 package org.jworkflow.engine;
+import org.jworkflow.internal.engine.WorkflowExecutionContext;
+import org.jworkflow.internal.engine.InMemoryWorkflowEngine;
 
-import org.jworkflow.events.EventMessage;
-import org.jworkflow.events.EventMetadata;
 import org.jworkflow.events.EventName;
-import org.jworkflow.events.EventStatusAttempt;
-import org.jworkflow.events.EventStatusRepository;
+import org.jworkflow.internal.events.EventStatusAttempt;
+import org.jworkflow.internal.events.EventStatusRepository;
 import org.jworkflow.events.WorkflowEvent;
-import org.jworkflow.model.BranchConditionEvaluator;
-import org.jworkflow.model.DefinitionValidator;
+import org.jworkflow.internal.model.DefinitionValidator;
 import org.jworkflow.model.GatewayType;
 import org.jworkflow.model.RetryPolicy;
 import org.jworkflow.model.TimeoutDefinition;
 import org.jworkflow.model.WorkflowDefinition;
-import org.jworkflow.model.WorkflowDefinitionRegistry;
+import org.jworkflow.internal.model.WorkflowDefinitionRegistry;
 import org.jworkflow.model.WorkflowInstanceId;
 import org.jworkflow.model.WorkflowNode;
 import org.jworkflow.model.WorkflowNodeType;
 import org.jworkflow.model.WorkflowSnapshot;
 import org.jworkflow.model.WorkflowStatus;
-import org.jworkflow.model.WorkflowTimer;
+import org.jworkflow.internal.model.WorkflowTimer;
 import org.jworkflow.model.WorkflowTransition;
-import org.jworkflow.persistence.WorkflowDefinitionRepository;
-import org.jworkflow.persistence.WorkflowEventRepository;
-import org.jworkflow.persistence.WorkflowInstanceRepository;
-import org.jworkflow.persistence.WorkflowPersistence;
-import org.jworkflow.persistence.WorkflowTimerRepository;
-import org.jworkflow.persistence.WorkflowTransactionManager;
+import org.jworkflow.internal.persistence.WorkflowDefinitionRepository;
+import org.jworkflow.internal.persistence.WorkflowEventRepository;
+import org.jworkflow.internal.persistence.WorkflowInstanceRepository;
+import org.jworkflow.internal.persistence.WorkflowPersistence;
+import org.jworkflow.internal.persistence.WorkflowTimerRepository;
+import org.jworkflow.internal.persistence.WorkflowTransactionManager;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -361,8 +360,8 @@ public final class CoreRuntimeContractTest {
                 @Override public void markFailed(UUID id, String owner, String error, Instant next) { }
                 @Override public void cancel(UUID id, Instant at) { }
                 @Override public int releaseExpiredClaims(Instant now) { return 0; }
-                @Override public void appendAttempt(org.jworkflow.model.WorkflowTimerAttempt attempt) { }
-                @Override public List<org.jworkflow.model.WorkflowTimerAttempt> findAttempts(UUID timerId) { return List.of(); }
+                @Override public void appendAttempt(org.jworkflow.internal.model.WorkflowTimerAttempt attempt) { }
+                @Override public List<org.jworkflow.internal.model.WorkflowTimerAttempt> findAttempts(UUID timerId) { return List.of(); }
             };
         }
         @Override public WorkflowTransactionManager transactions() {

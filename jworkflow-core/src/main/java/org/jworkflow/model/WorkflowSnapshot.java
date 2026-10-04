@@ -1,4 +1,5 @@
 package org.jworkflow.model;
+import org.jworkflow.internal.model.ImmutableData;
 
 import org.jworkflow.events.*;
 

@@ -1,4 +1,11 @@
 package org.jworkflow.persistence;
+import org.jworkflow.internal.persistence.WorkflowTransactionManager;
+import org.jworkflow.internal.persistence.WorkflowTransaction;
+import org.jworkflow.internal.persistence.WorkflowTimerRepository;
+import org.jworkflow.internal.persistence.WorkflowInstanceRepository;
+import org.jworkflow.internal.persistence.WorkflowDefinitionRepository;
+import org.jworkflow.internal.persistence.OutboxRepository;
+import org.jworkflow.internal.persistence.InboxRepository;
 
 import org.jworkflow.events.EventMessage;
 import org.jworkflow.inbox.InboxMessage;

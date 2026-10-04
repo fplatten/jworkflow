@@ -1,7 +1,7 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.model.WorkflowTimer;
 
 import org.jworkflow.inbox.*;
-import org.jworkflow.model.*;
 import org.jworkflow.outbox.*;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;

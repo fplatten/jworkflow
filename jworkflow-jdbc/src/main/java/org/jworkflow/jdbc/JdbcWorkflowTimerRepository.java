@@ -1,10 +1,13 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.model.WorkflowTimerStatus;
+import org.jworkflow.internal.model.WorkflowTimerAttempt;
+import org.jworkflow.internal.model.WorkflowTimer;
 
 import org.jworkflow.engine.WorkflowInfrastructureException;
 import org.jworkflow.events.EventName;
 import org.jworkflow.model.*;
 import org.jworkflow.persistence.PersistenceConstraintException;
-import org.jworkflow.persistence.WorkflowTimerRepository;
+import org.jworkflow.internal.persistence.WorkflowTimerRepository;
 
 import java.sql.*;
 import java.time.Instant;

@@ -1,8 +1,9 @@
 package org.jworkflow.definition;
+import org.jworkflow.internal.definition.WorkflowDefinitionActivationService;
 
 import org.jworkflow.dsl.GroovyWorkflowDslCompiler;
-import org.jworkflow.model.DefinitionValidator;
-import org.jworkflow.model.WorkflowDefinitionRegistry;
+import org.jworkflow.internal.model.DefinitionValidator;
+import org.jworkflow.internal.model.WorkflowDefinitionRegistry;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

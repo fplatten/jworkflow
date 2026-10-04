@@ -1,4 +1,5 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.inbox.InboxInsertResult;
 
 import org.jworkflow.events.WorkflowEvent;
 import org.jworkflow.events.IntegrationEvent;
@@ -6,7 +7,7 @@ import org.jworkflow.inbox.*;
 import java.util.Objects;
 
 /** Infrastructure boundary converting an external event envelope into the durable inbox model. */
-public final class JdbcInboxEventAdapter {
+final class JdbcInboxEventAdapter {
     private final JdbcInboxApplication application;
     /**
      * Constructs JdbcInboxEventAdapter with the supplied collaborators and configuration.

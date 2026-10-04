@@ -1,7 +1,10 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.events.EventStatusValue;
+import org.jworkflow.internal.events.EventStatusScope;
+import org.jworkflow.internal.events.EventStatusAttempt;
+import org.jworkflow.internal.events.EventStatusRepository;
 
 import org.jworkflow.engine.*;
-import org.jworkflow.events.*;
 import org.jworkflow.model.*;
 
 import java.sql.Connection;

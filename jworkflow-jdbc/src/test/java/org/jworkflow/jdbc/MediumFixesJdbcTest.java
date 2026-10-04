@@ -1,11 +1,12 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.routing.RouteWorkflowEventCommand;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.*;
 import org.jworkflow.inbox.*;
 import org.jworkflow.model.*;
 import org.jworkflow.persistence.PersistenceSerializationException;
-import org.jworkflow.query.PersistenceWorkflowQueryService;
+import org.jworkflow.internal.query.PersistenceWorkflowQueryService;
 import org.jworkflow.routing.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

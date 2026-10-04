@@ -1,4 +1,5 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.persistence.CommandResultRecord;
 
 import org.jworkflow.engine.WorkflowInfrastructureException;
 import org.jworkflow.inbox.InboxMessage;

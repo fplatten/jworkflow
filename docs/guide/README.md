@@ -1,5 +1,6 @@
 # jworkflow guides
 
+- [Supported API](supported-api.md): the types covered by semantic versioning, and what `internal` means.
 - [Operations](operations.md): background workers, settings, schema migrations, leases and recovery.
 - [Threading and lifecycle](threading-and-lifecycle.md): which threads run your code, closing engines and workers,
   the process-wide engine.

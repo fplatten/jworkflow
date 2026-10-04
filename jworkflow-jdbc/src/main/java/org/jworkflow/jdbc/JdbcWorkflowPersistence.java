@@ -1,7 +1,15 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.persistence.WorkflowTransactionManager;
+import org.jworkflow.internal.persistence.WorkflowTimerRepository;
+import org.jworkflow.internal.persistence.WorkflowPersistence;
+import org.jworkflow.internal.persistence.WorkflowInstanceRepository;
+import org.jworkflow.internal.persistence.WorkflowEventRepository;
+import org.jworkflow.internal.persistence.WorkflowDefinitionRepository;
+import org.jworkflow.internal.persistence.OutboxRepository;
+import org.jworkflow.internal.persistence.InboxRepository;
+import org.jworkflow.internal.persistence.CommandResultRepository;
 
-import org.jworkflow.events.EventStatusRepository;
-import org.jworkflow.persistence.*;
+import org.jworkflow.internal.events.EventStatusRepository;
 
 import javax.sql.DataSource;
 import java.sql.Driver;
@@ -14,7 +22,7 @@ import java.util.Map;
  * disabled. All repository work must use this bundle's transaction manager for atomic multi-repository changes.
  * Select exactly one migration owner per schema. Host pools and credentials remain caller-owned.</p>
  */
-public final class JdbcWorkflowPersistence implements WorkflowPersistence {
+final class JdbcWorkflowPersistence implements WorkflowPersistence {
     private final JdbcWorkflowDefinitionRepository definitions;
     private final JdbcWorkflowInstanceRepository instances;
     private final JdbcWorkflowEventRepository events;

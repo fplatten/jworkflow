@@ -1,4 +1,6 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.model.WorkflowTimerStatus;
+import org.jworkflow.internal.model.WorkflowTimer;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.EventName;
