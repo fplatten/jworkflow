@@ -156,7 +156,8 @@ final class JdbcInboxRepository implements InboxRepository {
     /**
      * {@inheritDoc}
      */
-    @Override public int releaseExpiredClaims(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.INBOX,now,maxAttempts);}
+    @Override public int releaseExpiredClaims(Instant now){return releaseExpired(now).count();}
+    JdbcLeaseSupport.Released releaseExpired(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.INBOX,now,maxAttempts);}
     /**
      * Sets the attempt budget applied when expired leases are released; zero only counts the attempt.
      * @param value maximum attempts, or zero for no dead-letter limit

@@ -33,6 +33,7 @@ public final class MetricsWorkflowLifecycleObserver implements WorkflowLifecycle
             case RETRY_SCHEDULED -> "jworkflow.retry.scheduled";
             case OUTBOX_PUBLISHED -> "jworkflow.outbox.published";
             case OUTBOX_PUBLICATION_FAILED -> "jworkflow.outbox.failed";
+            case OUTBOX_DEAD_LETTERED -> "jworkflow.outbox.dead_lettered";
             case INBOX_DEAD_LETTERED -> "jworkflow.inbox.dead_lettered";
             default -> null;
         };

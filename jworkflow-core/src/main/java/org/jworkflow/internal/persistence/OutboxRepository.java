@@ -152,4 +152,14 @@ public interface OutboxRepository {
      * @return the matching values in the order defined by this operation
      */
     default List<OutboxMessage> findPending(int limit) { return List.of(); }
+    /**
+     * Returns one page of dead-lettered messages ordered by message id.
+     * @param destination destination to filter by, or null for every destination
+     * @param afterMessageId return only messages whose id sorts after this one, or null for the first page
+     * @param limit maximum number of rows requested
+     * @return the matching dead-lettered messages, ordered by message id
+     */
+    default List<OutboxMessage> findDeadLettered(String destination, UUID afterMessageId, int limit) {
+        throw new UnsupportedOperationException("Dead-letter queries are not supported by this outbox repository");
+    }
 }

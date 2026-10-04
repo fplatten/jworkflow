@@ -97,9 +97,11 @@ public final class OutboxPublisherService {
         return outbox.findById(message.messageId()).orElseThrow();
     });
         observe(WorkflowLifecycleEventType.OUTBOX_PUBLICATION_FAILED,failed,TEXT_PUBLICATION_FAILED);
+        if(exhausted)observe(WorkflowLifecycleEventType.OUTBOX_DEAD_LETTERED,failed,TEXT_PUBLICATION_FAILED);
         return failed;
     }
     private void observe(WorkflowLifecycleEventType type,OutboxMessage message,String category){java.util.LinkedHashMap<String,String>a=new java.util.LinkedHashMap<>();
+        a.put("messageId",message.messageId().toString());
         a.put("destination",message.destination());
         a.put("status",message.status().name());
         if(category!=null)a.put("failureCategory",category);

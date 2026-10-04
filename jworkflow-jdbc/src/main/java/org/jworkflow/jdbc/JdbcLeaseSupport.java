@@ -148,7 +148,14 @@ final class JdbcLeaseSupport {
      * attempt exhausts the budget is dead-lettered instead of rescheduled, so work that repeatedly crashes or hangs
      * its worker cannot be redelivered forever.
      */
-    static int release(JdbcConnectionFactory factory,Queue queue,Instant now,int maxAttempts){
+    /**
+     * Rows released by one expired-lease sweep.
+     * @param count number of released rows
+     * @param deadLettered ids of the rows this sweep moved to DEAD_LETTER
+     */
+    record Released(int count,List<UUID> deadLettered){ }
+
+    static Released release(JdbcConnectionFactory factory,Queue queue,Instant now,int maxAttempts){
         String exhausted="attempt_count+1>="+maxAttempts;
         String status=maxAttempts>0?"case when "+exhausted+" then 'DEAD_LETTER' else 'RETRY_SCHEDULED' end":"'RETRY_SCHEDULED'";
         String assignments="status_value="+status
@@ -159,7 +166,14 @@ final class JdbcLeaseSupport {
         try(Connection connection=factory.open();PreparedStatement statement=connection.prepareStatement(factory.strategy().releaseClaimsSql(queue,assignments))){
             factory.strategy().bindInstant(statement,1,now);
             if(queue.timer)factory.strategy().bindInstant(statement,2,now);
-            return statement.executeUpdate();
+            int count=0;List<UUID> deadLettered=new ArrayList<>();
+            ResultSet returned=statement.execute()?statement.getResultSet():null;
+            if(returned!=null){
+                try(ResultSet rows=returned){
+                    while(rows.next()){count++;if("DEAD_LETTER".equals(rows.getString(2)))deadLettered.add(UUID.fromString(rows.getString(1)));}
+                }
+            }else count=Math.max(0,statement.getUpdateCount());
+            return new Released(count,List.copyOf(deadLettered));
         }catch(SQLException failure){throw new WorkflowInfrastructureException("Failed expired lease release",failure);}
     }
     static StaleWorkflowClaimException stale(JdbcConnectionFactory factory){

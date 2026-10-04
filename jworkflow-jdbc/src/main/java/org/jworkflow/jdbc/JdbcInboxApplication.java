@@ -82,7 +82,7 @@ public final class JdbcInboxApplication implements AutoCloseable {
     public int pollOnce(){
         if(reconciliationRequired.get())throw new WorkflowInfrastructureException("Inbox polling paused: reconcile the failed transaction before recreating this worker",null);
         Instant now=clock.instant();
-        persistence.transactions().execute(()->persistence.inbox().releaseExpiredClaims(now));
+        persistence.transactions().execute(()->JdbcExpiredLeases.releaseInbox(persistence,now,lifecycleObserver,clock));
         List<InboxMessage> claimed=persistence.jdbcTransactions().inWriteTransaction(()->persistence.inbox().claimEligibleFenced(now,workerId,now.plus(lease),batchSize));
         RuntimeException first=null;
         for(InboxMessage message:claimed){
@@ -148,7 +148,7 @@ public final class JdbcInboxApplication implements AutoCloseable {
         if(exhausted)persistence.inbox().markDeadLetter(message.messageId(),workerId,message.claimToken(),error,clock.instant());
             else persistence.inbox().scheduleRetry(message.messageId(),workerId,message.claimToken(),next,error);
         });
-            if(exhausted)persistence.transactions().afterCommit(()->lifecycleObserver.observe(new WorkflowLifecycleEvent(WorkflowLifecycleEventType.INBOX_DEAD_LETTERED,clock.instant(),null,null,null,null,null,message.correlationId(),message.causationId(),null,Map.of("sourceSystem",message.sourceSystem(),"failureCategory","inbox_processing_failed"))));
+            if(exhausted)persistence.transactions().afterCommit(()->lifecycleObserver.observe(new WorkflowLifecycleEvent(WorkflowLifecycleEventType.INBOX_DEAD_LETTERED,clock.instant(),null,null,null,null,null,message.correlationId(),message.causationId(),null,Map.of("messageId",message.messageId().toString(),"sourceSystem",message.sourceSystem(),"failureCategory","inbox_processing_failed"))));
         }
     private Object dispatch(Command command){if(command instanceof StartWorkflowCommand c)return engine.start(c);
         if(command instanceof SignalWorkflowCommand c)return engine.signal(c);

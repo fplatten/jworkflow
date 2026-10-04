@@ -93,3 +93,6 @@ escaping.
   version is registered.
 - A snapshot stores the current state, status, variables and lock version. Pending waits are reconstructed from the
   current state and the stored definition revision; timers are stored as separate rows.
+- A command result stored under an idempotency key holds the command-time snapshot and the emitted event ids, on
+  SQLite and PostgreSQL, so a repeat returns the original result. Results written before 0.1.0 on SQLite lack these
+  fields; repeats of those commands return the current snapshot instead.

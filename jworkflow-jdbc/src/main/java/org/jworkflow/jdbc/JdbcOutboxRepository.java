@@ -139,7 +139,8 @@ final class JdbcOutboxRepository implements OutboxRepository {
     /**
      * {@inheritDoc}
      */
-    @Override public int releaseExpiredClaims(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.OUTBOX,now,maxAttempts);}
+    @Override public int releaseExpiredClaims(Instant now){return releaseExpired(now).count();}
+    JdbcLeaseSupport.Released releaseExpired(Instant now){return JdbcLeaseSupport.release(connections,JdbcLeaseSupport.Queue.OUTBOX,now,maxAttempts);}
     /**
      * Sets the attempt budget applied when expired leases are released; zero only counts the attempt.
      * @param value maximum attempts, or zero for no dead-letter limit
@@ -193,6 +194,21 @@ final class JdbcOutboxRepository implements OutboxRepository {
         return List.copyOf(out);
     }}catch(SQLException x){throw new WorkflowInfrastructureException("Failed pending outbox query",x);
     }}
+    /**
+     * {@inheritDoc}
+     */
+    @Override public List<OutboxMessage> findDeadLettered(String destination,UUID afterMessageId,int limit){if(limit<1)throw new IllegalArgumentException("limit must be positive");
+        StringBuilder sql=new StringBuilder(TEXT_SELECT_PREFIX+COLUMNS+" from workflow_outbox where status_value='DEAD_LETTER'");
+        if(destination!=null)sql.append(" and destination=?");
+        if(afterMessageId!=null)sql.append(" and id>?");
+        sql.append(" order by id limit ?");
+        try(Connection c=connections.open();PreparedStatement s=c.prepareStatement(sql.toString())){int index=1;
+            if(destination!=null)s.setString(index++,destination);
+            if(afterMessageId!=null)s.setString(index++,afterMessageId.toString());
+            s.setInt(index,limit);
+            try(ResultSet r=s.executeQuery()){ArrayList<OutboxMessage> out=new ArrayList<>();while(r.next())out.add(map(r));return List.copyOf(out);}
+        }catch(SQLException x){throw new WorkflowInfrastructureException("Failed dead-letter outbox query",x);}
+    }
     private Optional<OutboxMessage> find(String column,String first,String second){
         if(second==null)return findBySingleColumn(column,first);
         String sql=TEXT_SELECT_PREFIX+COLUMNS+" from workflow_outbox where destination=? and idempotency_key=?";

@@ -356,12 +356,11 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             d.put(TEXT_COMMAND_ID,r.commandId().toString());
             d.put(TEXT_STATUS,r.status().name());
         }
-        if(type()==Type.POSTGRESQL) {
-            WorkflowSnapshot snapshot=result instanceof StartWorkflowResult r?r.snapshot():((WorkflowCommandResult)result).snapshot();
-            d.put(TEXT_SNAPSHOT, JdbcCommandSnapshot.encode(snapshot));
-            d.put(TEXT_EMITTED_EVENT_IDS,result instanceof StartWorkflowResult r?r.emittedEventIds():((WorkflowCommandResult)result).emittedEventIds());
-            if(result instanceof WorkflowCommandResult r)d.put("eventStatusAttemptIds",r.eventStatusAttemptIds());
-        }
+        // Every backend stores the command-time snapshot and ids so a repeat returns the original result.
+        WorkflowSnapshot snapshot=result instanceof StartWorkflowResult r?r.snapshot():((WorkflowCommandResult)result).snapshot();
+        d.put(TEXT_SNAPSHOT, JdbcCommandSnapshot.encode(snapshot));
+        d.put(TEXT_EMITTED_EVENT_IDS,result instanceof StartWorkflowResult r?r.emittedEventIds():((WorkflowCommandResult)result).emittedEventIds());
+        if(result instanceof WorkflowCommandResult r)d.put("eventStatusAttemptIds",r.eventStatusAttemptIds());
         CommandResultRecord stored=persistence.commandResults().save(new CommandResultRecord(key,type,hash,id,d,clock.instant()));
         if(!Objects.equals(stored.workflowInstanceId(),id)||!new JdbcJsonCodec().write(stored.result()).equals(new JdbcJsonCodec().write(d))) {
             throw new org.jworkflow.persistence.PersistenceConstraintException("Command result changed outside command key protection; transaction must roll back");
@@ -526,8 +525,8 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         persistence.transactions().execute(()->{
             Instant now=clock.instant();
                 persistence.timers().releaseExpiredClaims(now);
-                persistence.inbox().releaseExpiredClaims(now);
-                persistence.outbox().releaseExpiredClaims(now);
+                JdbcExpiredLeases.releaseInbox(persistence,now,lifecycleObserver,clock);
+                JdbcExpiredLeases.releaseOutbox(persistence,now,lifecycleObserver,clock);
         });
         if(!recovery.lazyDefinitionValidation)doAuditActiveDefinitions(recovery.startupValidationBatchSize);
     }
@@ -564,8 +563,8 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         if(timerReconciliationRequired.get())throw new WorkflowInfrastructureException("Timer polling paused: reconcile the failed transaction before recreating this engine",null);
         Instant now=clock.instant();
             persistence.transactions().execute(()->{persistence.timers().releaseExpiredClaims(now);
-            persistence.inbox().releaseExpiredClaims(now);
-            persistence.outbox().releaseExpiredClaims(now);
+            JdbcExpiredLeases.releaseInbox(persistence,now,lifecycleObserver,clock);
+            JdbcExpiredLeases.releaseOutbox(persistence,now,lifecycleObserver,clock);
         });
         List<WorkflowTimer> claimed=persistence.jdbcTransactions().inWriteTransaction(()->persistence.timers().claimDueFenced(now,workerId,now.plus(recovery.lease),recovery.batchSize));
         RuntimeException first=null;

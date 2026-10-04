@@ -84,7 +84,7 @@ interface JdbcDatabaseStrategy {
      * @return SQL invalidating expired queue leases and clearing their owners and acquisition tokens
      */
     default String releaseClaimsSql(JdbcLeaseSupport.Queue queue,String assignments){
-        return "update "+queue.table+" set "+assignments+" where status_value='CLAIMED' and claim_until<=?";
+        return "update "+queue.table+" set "+assignments+" where status_value='CLAIMED' and claim_until<=? returning id,status_value";
     }
     /**
      * Rejects owner-only completion when this backend requires acquisition-token fencing.
