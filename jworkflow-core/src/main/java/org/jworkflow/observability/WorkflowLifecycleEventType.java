@@ -65,6 +65,10 @@ public enum WorkflowLifecycleEventType {
      */
     OUTBOX_PUBLICATION_FAILED,
     /**
+     * An outgoing message was dead-lettered: its publication attempts or its worker leases were exhausted.
+     */
+    OUTBOX_DEAD_LETTERED,
+    /**
      * An incoming message exhausted automatic retries.
      */
     INBOX_DEAD_LETTERED

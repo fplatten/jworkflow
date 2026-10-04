@@ -71,6 +71,15 @@ public interface WorkflowQueryService{
   */
  List<OutboxStateView> pendingOutbox(int limit);
  /**
+  * Returns one page of dead-lettered outbox messages, ordered by message id. To read the next page, pass the
+  * {@code messageId} of the last returned view as {@code afterMessageId}.
+  * @param destination destination to filter by, or null for every destination
+  * @param afterMessageId return only messages whose id sorts after this one, or null for the first page
+  * @param limit maximum number of rows requested; must be positive
+  * @return the matching dead-lettered messages
+  */
+ List<OutboxStateView> deadLetteredOutbox(String destination,UUID afterMessageId,int limit);
+ /**
   * Feeds ordered history to the supplied projection without changing authoritative workflow state; the projection
   * owns any external effects.
   * @param id identity of the value to look up or update

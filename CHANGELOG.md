@@ -13,6 +13,10 @@ All notable changes are recorded here. The project has not been released yet; ve
 
 ### Fixed
 
+- SQLite: an idempotent repeat now returns the snapshot and event ids recorded when the command first ran, as on
+  PostgreSQL. It used to return the workflow's current state.
+- Inbox and outbox messages dead-lettered because their worker's lease kept expiring are now reported. Previously
+  only processing or publication failures were, and outbox dead letters had no event at all.
 - Timestamps written by the engine now come from the injected `Clock`. Command-result `created_at`, workflow
   definition `created_at`/`updated_at`, and timer `created_at`/`updated_at` (scheduled, retried, fired and cancelled)
   used the system clock even when a different clock was configured. Timer due times and lease decisions already used
@@ -72,6 +76,13 @@ All notable changes are recorded here. The project has not been released yet; ve
   so the core jar no longer ships example code.
 
 ### Added
+
+- `WorkflowLifecycleEventType.OUTBOX_DEAD_LETTERED` (counted as `jworkflow.outbox.dead_lettered`), emitted when an
+  outbox message runs out of publication attempts or leases. Outbox lifecycle events and `INBOX_DEAD_LETTERED` carry
+  a `messageId` attribute; dead-letter events also carry `failureCategory` (`publication_failed`,
+  `inbox_processing_failed` or `lease_expired`).
+- `WorkflowQueryService.deadLetteredOutbox(destination, afterMessageId, limit)`: page through dead-lettered outbox
+  messages, optionally for one destination.
 
 - SQLite migrations V7 (fixed-width timestamps) and V8, and PostgreSQL migration V3: an index on
   `workflow_timer(workflow_instance_id)`.

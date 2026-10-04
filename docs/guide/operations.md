@@ -105,6 +105,23 @@ token, so a worker whose lease was taken over cannot overwrite the new owner's r
 
 Choose leases longer than the slowest expected handler or publication, and keep worker clocks synchronised.
 
+### Dead letters
+
+A message is dead-lettered when it runs out of attempts, whether its publication or processing kept failing or its
+worker's lease kept expiring. Every dead letter is reported, so none goes unnoticed:
+
+- **Lifecycle events.** `OUTBOX_DEAD_LETTERED` and `INBOX_DEAD_LETTERED` reach your `WorkflowLifecycleObserver` after
+  the dead letter commits. Their attributes include `messageId`, the `destination` (outbox) or `sourceSystem` (inbox),
+  and `failureCategory`: `publication_failed`, `inbox_processing_failed` or `lease_expired`.
+- **Metrics.** `MetricsWorkflowLifecycleObserver` counts them as `jworkflow.outbox.dead_lettered` and
+  `jworkflow.inbox.dead_lettered`.
+- **Queries.** `engine.queries().deadLetteredOutbox(destination, afterMessageId, limit)` lists dead-lettered outbox
+  messages for one destination (or all, with `null`), ordered by message id. Pass the last returned `messageId` to
+  read the next page.
+- **Recovery.** Fix the destination first, then call `JdbcOutboxApplication.republish(...)` (or
+  `JdbcInboxApplication.reprocess(...)`). A republished message gets one more attempt; its attempt count is not
+  reset.
+
 ### Paused workers
 
 If a transaction's outcome is unknown (for example, the connection failed during commit) and the inbox or timer

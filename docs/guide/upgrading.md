@@ -55,6 +55,12 @@ earlier `0.1.0-SNAPSHOT` build to the current one. See the [changelog](../../CHA
 - **`findByCorrelationId`** ignores finished instances; only two *active* matches are ambiguous.
 - **In-memory engine** keeps only the 10,000 most recently finished instances; older ones are evicted with their
   idempotency results.
+- **SQLite repeats return the original result.** An idempotent repeat on SQLite returns the snapshot and event ids
+  from when the command first ran, as PostgreSQL already did, instead of the current state. Commands recorded before
+  the upgrade keep the old behaviour.
+- **More dead-letter events.** `INBOX_DEAD_LETTERED` is now also emitted when lease expiry exhausts a message, and
+  the new `OUTBOX_DEAD_LETTERED` covers outbox messages. A `switch` over `WorkflowLifecycleEventType` without a
+  `default` branch needs a case for `OUTBOX_DEAD_LETTERED`.
 - **Recorded timestamps follow the injected `Clock`.** Command results, workflow definitions and timers now record
   `created_at`/`updated_at` from the clock passed to `WorkflowEngine.builder().clock(...)` instead of the system clock.
   Engines that use the default clock see no difference. Schema migration history still records system time.
@@ -72,6 +78,7 @@ earlier `0.1.0-SNAPSHOT` build to the current one. See the [changelog](../../CHA
   `WorkflowEngineBuilder.persistence(...)`, `JdbcWorkflowEngine.transactionManager()`, and the classes
   `JdbcWorkflowPersistence`, `JdbcTransactionManager` and `JdbcInboxEventAdapter`.
 - `PendingTimerView.from(...)` was removed; views come from `WorkflowQueryService`.
+- `WorkflowQueryService.deadLetteredOutbox(...)` is new. Custom implementations of `WorkflowQueryService` must add it.
 
 ### Package moves for 0.1.0
 

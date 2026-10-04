@@ -42,7 +42,7 @@ final class PostgresqlDatabaseStrategy implements JdbcDatabaseStrategy {
     @Override public String releaseClaimsSql(JdbcLeaseSupport.Queue queue,String assignments){
         return "with expired as (select id from "+queue.table+" where status_value='CLAIMED' and claim_until<=?"
                 +" order by claim_until,id limit 1000 for update skip locked) update "+queue.table
-                +" q set "+assignments+" from expired e where q.id=e.id";
+                +" q set "+assignments+" from expired e where q.id=e.id returning q.id,q.status_value";
     }
 
     /**

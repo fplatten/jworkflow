@@ -15,6 +15,7 @@ import java.time.*;
 public final class JdbcOutboxApplication implements AutoCloseable {
     private final JdbcWorkflowPersistence persistence;
         private final Clock clock;
+        private final WorkflowLifecycleObserver lifecycleObserver;
         private final Duration lease;
         private final Duration pollInterval;
         private final int batchSize;
@@ -25,6 +26,7 @@ public final class JdbcOutboxApplication implements AutoCloseable {
         private ScheduledExecutorService poller;
     JdbcOutboxApplication(JdbcWorkflowPersistence persistence,Map<String,DestinationPublisher> destinations,Clock clock,Map<String,String> settings,WorkflowLifecycleObserver observer){this.persistence=Objects.requireNonNull(persistence);
         this.clock=Objects.requireNonNull(clock);
+        this.lifecycleObserver=org.jworkflow.internal.observability.SafeWorkflowLifecycleObserver.isolate(Objects.requireNonNull(observer,"observer"));
         Map<String,String>s=settings==null?Map.of():settings;
         lease=Duration.ofMillis(number(s,"outbox.lease-ms",30_000,100,3_600_000));
             pollInterval=Duration.ofMillis(number(s,"outbox.poll-interval-ms",250,10,60_000));
@@ -56,7 +58,7 @@ public final class JdbcOutboxApplication implements AutoCloseable {
     public int pollOnce(){
         if(persistence.transactions().isTransactionActive())throw new IllegalStateException("Outbox polling requires its own transaction boundaries");
         Instant now=clock.instant();
-        persistence.transactions().execute(()->persistence.outbox().releaseExpiredClaims(now));
+        persistence.transactions().execute(()->JdbcExpiredLeases.releaseOutbox(persistence,now,lifecycleObserver,clock));
         List<OutboxMessage> claimed=persistence.jdbcTransactions().inWriteTransaction(()->persistence.outbox().claimEligibleFenced(now,workerId,now.plus(lease),batchSize));
         RuntimeException first=null;
         for(OutboxMessage message:claimed){

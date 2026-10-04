@@ -122,6 +122,13 @@ public final class PersistenceWorkflowQueryService implements WorkflowQueryServi
      return persistence.outbox().findPending(limit).stream().map(OutboxStateView::from).toList();
  }
  /**
+  * {@inheritDoc}
+  */
+ @Override
+ public List<OutboxStateView> deadLetteredOutbox(String destination,UUID afterMessageId,int limit){positive(limit);
+     return persistence.outbox().findDeadLettered(destination,afterMessageId,limit).stream().map(OutboxStateView::from).toList();
+ }
+ /**
   * Feeds ordered history to the supplied projection without changing authoritative workflow state; the projection
   * owns any external effects.
   * @param id identity of the value to look up or update

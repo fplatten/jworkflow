@@ -103,6 +103,8 @@ final class JdbcWorkflowPersistence implements WorkflowPersistence {
     /**
      * {@inheritDoc}
      */
+    JdbcInboxRepository jdbcInbox(){return inbox;}
+    JdbcOutboxRepository jdbcOutbox(){return outbox;}
     @Override public InboxRepository inbox(){return inbox;}
     /**
      * {@inheritDoc}
