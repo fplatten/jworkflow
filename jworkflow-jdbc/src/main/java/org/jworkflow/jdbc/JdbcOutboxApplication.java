@@ -1,6 +1,9 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.outbox.OutboxAttempt;
+import org.jworkflow.internal.outbox.OutboxRepublishingService;
+import org.jworkflow.internal.outbox.OutboxPublisherService;
 
-import org.jworkflow.application.RetryBackoffPolicy;
+import org.jworkflow.internal.application.RetryBackoffPolicy;
 import org.jworkflow.outbox.*;
 import org.jworkflow.observability.*;
 import java.time.*;

@@ -1,8 +1,9 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.outbox.OutboxAttempt;
 
 import org.jworkflow.engine.WorkflowInfrastructureException;
 import org.jworkflow.outbox.*;
-import org.jworkflow.persistence.OutboxRepository;
+import org.jworkflow.internal.persistence.OutboxRepository;
 import org.jworkflow.persistence.PersistenceConstraintException;
 
 import java.sql.*;

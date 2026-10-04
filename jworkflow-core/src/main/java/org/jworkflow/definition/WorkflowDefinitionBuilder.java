@@ -1,4 +1,5 @@
 package org.jworkflow.definition;
+import org.jworkflow.internal.model.DefinitionValidator;
 
 import org.jworkflow.events.EventName;
 import org.jworkflow.engine.WorkflowEngineBuilder;

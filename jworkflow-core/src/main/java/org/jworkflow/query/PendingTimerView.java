@@ -13,10 +13,4 @@ import org.jworkflow.model.*;import java.time.Instant;import java.util.UUID;
  * @param claimUntil lease expiration instant, after the acquisition time
  */
 public record PendingTimerView(UUID timerId,WorkflowInstanceId instanceId,String stepName,Instant dueAt,
- WorkflowTimerStatus status,int attemptCount,Instant nextAttemptAt,String claimedBy,Instant claimUntil){
- /**
-  * Copies scheduling and lease observations from the stored timer without acquiring it.
-  * @param t the timer schedule
-  * @return the resulting pending timer view
-  */
- public static PendingTimerView from(WorkflowTimer t){return new PendingTimerView(t.timerId(),t.workflowInstanceId(),t.stepName(),t.dueAt(),t.status(),t.attemptCount(),t.nextAttemptAt(),t.claimedBy(),t.claimUntil());}}
+ WorkflowTimerStatus status,int attemptCount,Instant nextAttemptAt,String claimedBy,Instant claimUntil){}

@@ -1,6 +1,5 @@
 package org.jworkflow.definition;
 
-import org.jworkflow.engine.InMemoryWorkflowEngine;
 import org.jworkflow.engine.StepResult;
 import org.jworkflow.engine.WorkflowEngine;
 import org.jworkflow.engine.WorkflowValidationException;

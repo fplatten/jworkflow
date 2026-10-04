@@ -1,4 +1,5 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.inbox.InboxProcessingService;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.*;
@@ -25,9 +26,8 @@ final class TransactionNotificationContract {
     }
 
     static JdbcWorkflowEngine engine(WorkflowEngine.Type type, DataSource source, EventPublisher publisher) {
-        try { return (JdbcWorkflowEngine) WorkflowEngine.builder().type(type).dataSource(source).initialize(true)
+        return (JdbcWorkflowEngine) WorkflowEngine.builder().type(type).dataSource(source).initialize(true)
                 .timerPolling(false).definition(definition()).eventPublisher(publisher).build();
-        } catch(ClassNotFoundException failure) { throw new AssertionError(failure); }
     }
 
     static int count(DataSource source,String table) {

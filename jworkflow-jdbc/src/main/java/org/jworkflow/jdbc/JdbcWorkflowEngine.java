@@ -1,4 +1,21 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.model.WorkflowTimerStatus;
+import org.jworkflow.internal.model.WorkflowTimerAttempt;
+import org.jworkflow.internal.model.WorkflowTimer;
+import org.jworkflow.internal.model.WorkflowDefinitionRegistry;
+import org.jworkflow.internal.security.SafeEventCapturePolicy;
+import org.jworkflow.internal.observability.WorkflowEventLifecycleAdapter;
+import org.jworkflow.internal.observability.NoOpWorkflowLifecycleObserver;
+import org.jworkflow.internal.observability.SafeWorkflowLifecycleObserver;
+import org.jworkflow.internal.events.NoOpEventPublisher;
+import org.jworkflow.internal.outbox.OutboxRoutingService;
+import org.jworkflow.internal.outbox.OutboxEnqueueService;
+import org.jworkflow.internal.persistence.WorkflowTransactionManager;
+import org.jworkflow.internal.persistence.CommandResultRecord;
+import org.jworkflow.internal.persistence.ActiveWorkflowCursor;
+import org.jworkflow.internal.engine.WorkflowTransitionResult;
+import org.jworkflow.internal.engine.WorkflowMutation;
+import org.jworkflow.internal.engine.WorkflowStateMachine;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.*;
@@ -71,6 +88,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             this.connections=Objects.requireNonNull(connections);
             this.persistence=JdbcWorkflowPersistence.from(connections);
             persistence.configureLeaseAttemptLimits(settings);
+            persistence.useClock(Objects.requireNonNull(clock,"clock"));
         this.observer=Objects.requireNonNull(observer);
             this.listeners=new java.util.concurrent.ConcurrentHashMap<>(listeners==null?Map.of():listeners);
         this.lifecycleObserver=SafeWorkflowLifecycleObserver.isolate(Objects.requireNonNull(lifecycleObserver,"lifecycleObserver"));
@@ -104,7 +122,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
      * @return the configured durable engine; the caller must close it
      * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
      */
-    public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init)throws ClassNotFoundException{
+    static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init)throws ClassNotFoundException{
         return create(type,url,user,password,driver,source,init,new WorkflowDefinitionRegistry(),NoOpEventPublisher.INSTANCE,Map.of(),new BranchConditionEvaluator(),Map.of(),Map.of(),Map.of(),NoOpWorkflowLifecycleObserver.INSTANCE,Clock.systemUTC(),CaptureAllEventPolicy.INSTANCE);
     }
     /**
@@ -129,7 +147,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
      * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
      */
     @SuppressWarnings("java:S107") // Compatibility factory retained for existing clients.
-    public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
+    static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
       WorkflowDefinitionRegistry definitions,EventPublisher publisher,Map<String,StepHandler> handlers,BranchConditionEvaluator conditions,
       Map<String,String> starts,Map<String,String> settings,Map<String,Object> listeners,Clock clock)throws ClassNotFoundException{
         return create(type,url,user,password,driver,source,init,definitions,publisher,handlers,conditions,starts,settings,listeners,NoOpWorkflowLifecycleObserver.INSTANCE,clock);
@@ -157,7 +175,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
      * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
      */
     @SuppressWarnings("java:S107") // Compatibility factory retained for existing clients.
-    public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
+    static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
       WorkflowDefinitionRegistry definitions,EventPublisher publisher,Map<String,StepHandler> handlers,BranchConditionEvaluator conditions,
       Map<String,String> starts,Map<String,String> settings,Map<String,Object> listeners,WorkflowLifecycleObserver lifecycleObserver,Clock clock)throws ClassNotFoundException{
         return create(type,url,user,password,driver,source,init,definitions,publisher,handlers,conditions,starts,settings,listeners,lifecycleObserver,clock,CaptureAllEventPolicy.INSTANCE);
@@ -188,7 +206,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
      * @throws IllegalArgumentException if the supplied values violate the operation's constraints
      */
     @SuppressWarnings("java:S107") // Optional-module factory mirrors the builder configuration contract.
-    public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
+    static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
       WorkflowDefinitionRegistry definitions,EventPublisher publisher,Map<String,StepHandler> handlers,BranchConditionEvaluator conditions,
       Map<String,String> starts,Map<String,String> settings,Map<String,Object> listeners,WorkflowLifecycleObserver lifecycleObserver,Clock clock,
       EventCapturePolicy eventCapturePolicy)throws ClassNotFoundException{
@@ -226,7 +244,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
      * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
      */
     @SuppressWarnings("java:S107") // Compatibility factory retained for existing clients.
-    public static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
+    static JdbcWorkflowEngine create(Type type,String url,String user,String password,Driver driver,DataSource source,boolean init,
       WorkflowDefinitionRegistry definitions,EventPublisher publisher,Map<String,StepHandler> handlers,BranchConditionEvaluator conditions,
       Map<String,String> starts,Map<String,String> settings,Map<String,Object> listeners)throws ClassNotFoundException{
         return create(type,url,user,password,driver,source,init,definitions,publisher,handlers,conditions,starts,settings,listeners,NoOpWorkflowLifecycleObserver.INSTANCE,Clock.systemUTC());
@@ -344,7 +362,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
             d.put(TEXT_EMITTED_EVENT_IDS,result instanceof StartWorkflowResult r?r.emittedEventIds():((WorkflowCommandResult)result).emittedEventIds());
             if(result instanceof WorkflowCommandResult r)d.put("eventStatusAttemptIds",r.eventStatusAttemptIds());
         }
-        CommandResultRecord stored=persistence.commandResults().save(new CommandResultRecord(key,type,hash,id,d,Instant.now()));
+        CommandResultRecord stored=persistence.commandResults().save(new CommandResultRecord(key,type,hash,id,d,clock.instant()));
         if(!Objects.equals(stored.workflowInstanceId(),id)||!new JdbcJsonCodec().write(stored.result()).equals(new JdbcJsonCodec().write(d))) {
             throw new org.jworkflow.persistence.PersistenceConstraintException("Command result changed outside command key protection; transaction must roll back");
         }
@@ -385,7 +403,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     /**
      * {@inheritDoc}
      */
-    @Override public org.jworkflow.query.WorkflowQueryService queries(){return new org.jworkflow.query.PersistenceWorkflowQueryService(persistence);
+    @Override public org.jworkflow.query.WorkflowQueryService queries(){return new org.jworkflow.internal.query.PersistenceWorkflowQueryService(persistence);
     }
     /**
      * {@inheritDoc}
@@ -521,7 +539,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
     public int auditActiveDefinitions(){return doAuditActiveDefinitions(recovery.startupValidationBatchSize);
     }
     private int doAuditActiveDefinitions(int batchSize){int scanned=0;
-        org.jworkflow.persistence.ActiveWorkflowCursor cursor=null;
+        org.jworkflow.internal.persistence.ActiveWorkflowCursor cursor=null;
         while(true){List<WorkflowSnapshot> page=persistence.instances().findActiveAfter(cursor,batchSize);
         startupValidationQueryCount++;
         startupValidationPeakBatchSize=Math.max(startupValidationPeakBatchSize,page.size());
@@ -529,7 +547,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
         scanned+=page.size();
         if(page.size()<batchSize)return scanned;
         WorkflowSnapshot last=page.get(page.size()-1);
-        cursor=new org.jworkflow.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
+        cursor=new org.jworkflow.internal.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
     }}
     private void startTimerPoller(){if(!recovery.timerPolling)return;
         timerPoller=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"jworkflow-jdbc-timers-"+workerId.substring(0,8));
@@ -660,7 +678,7 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
      * Returns the transaction manager shared by this engine and its repositories.
      * @return the transaction manager shared by this engine and its repositories
      */
-    public WorkflowTransactionManager transactionManager(){return persistence.transactions();
+    WorkflowTransactionManager transactionManager(){return persistence.transactions();
     }
     /**
      * Creates a JDBC inbox application sharing this engine's persistence and command boundary. Close the
@@ -758,12 +776,12 @@ public final class JdbcWorkflowEngine implements WorkflowEngine {
          * {@inheritDoc}
          */
         @Override public List<WorkflowSnapshot> getWorkflows(){ArrayList<WorkflowSnapshot> all=new ArrayList<>();
-        org.jworkflow.persistence.ActiveWorkflowCursor cursor=null;
+        org.jworkflow.internal.persistence.ActiveWorkflowCursor cursor=null;
         while(true){List<WorkflowSnapshot> page=persistence.instances().findActiveAfter(cursor,recovery.startupValidationBatchSize);
         all.addAll(page);
         if(page.size()<recovery.startupValidationBatchSize)return List.copyOf(all);
         WorkflowSnapshot last=page.get(page.size()-1);
-        cursor=new org.jworkflow.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
+        cursor=new org.jworkflow.internal.persistence.ActiveWorkflowCursor(last.updatedAt(),last.instanceId());
     }}
 
         /**

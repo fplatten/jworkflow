@@ -1,11 +1,8 @@
 package org.jworkflow.observability;
+import org.jworkflow.internal.observability.SafeWorkflowLifecycleObserver;
 
 import org.jworkflow.definition.WorkflowDefinitionBuilder;
 import org.jworkflow.engine.*;
-import org.jworkflow.events.EventMetadata;
-import org.jworkflow.events.EventMessage;
-import org.jworkflow.events.EventName;
-import org.jworkflow.events.WorkflowEvent;
 import org.jworkflow.model.WorkflowInstanceId;
 import org.jworkflow.model.WorkflowSignal;
 import org.jworkflow.model.WorkflowStatus;

@@ -1,8 +1,10 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.inbox.InboxInsertResult;
+import org.jworkflow.inbox.InboxAttempt;
 
 import org.jworkflow.engine.WorkflowInfrastructureException;
 import org.jworkflow.inbox.*;
-import org.jworkflow.persistence.InboxRepository;
+import org.jworkflow.internal.persistence.InboxRepository;
 import org.jworkflow.persistence.PersistenceConstraintException;
 
 import java.sql.*;

@@ -1,8 +1,14 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.model.WorkflowTimerStatus;
+import org.jworkflow.internal.model.WorkflowTimer;
+import org.jworkflow.internal.outbox.OutboxClaim;
+import org.jworkflow.internal.inbox.InboxClaim;
+import org.jworkflow.internal.persistence.WorkflowTimerRepository;
+import org.jworkflow.internal.persistence.OutboxRepository;
+import org.jworkflow.internal.persistence.InboxRepository;
 
 import org.jworkflow.inbox.*;
 import org.jworkflow.outbox.*;
-import org.jworkflow.persistence.*;
 import org.jworkflow.model.*;
 import org.jworkflow.events.*;
 import org.junit.jupiter.api.*;

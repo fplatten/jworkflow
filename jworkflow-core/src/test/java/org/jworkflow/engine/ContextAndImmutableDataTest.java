@@ -1,7 +1,10 @@
 package org.jworkflow.engine;
+import org.jworkflow.internal.engine.WorkflowStepContext;
+import org.jworkflow.internal.engine.WorkflowContextSnapshot;
+import org.jworkflow.internal.engine.WorkflowExecutionContext;
 
 import org.jworkflow.events.WorkflowEvent;
-import org.jworkflow.model.ImmutableData;
+import org.jworkflow.internal.model.ImmutableData;
 import org.jworkflow.model.WorkflowInstanceId;
 import org.jworkflow.model.WorkflowSnapshot;
 import org.jworkflow.model.WorkflowStatus;

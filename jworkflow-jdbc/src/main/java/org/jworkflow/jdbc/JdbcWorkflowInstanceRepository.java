@@ -5,9 +5,9 @@ import org.jworkflow.model.WorkflowInstanceId;
 import org.jworkflow.model.WorkflowSnapshot;
 import org.jworkflow.model.WorkflowStatus;
 import org.jworkflow.persistence.PersistenceSerializationException;
-import org.jworkflow.persistence.WorkflowInstanceRepository;
+import org.jworkflow.internal.persistence.WorkflowInstanceRepository;
 import org.jworkflow.persistence.WorkflowOptimisticLockException;
-import org.jworkflow.persistence.ActiveWorkflowCursor;
+import org.jworkflow.internal.persistence.ActiveWorkflowCursor;
 import org.jworkflow.persistence.PersistenceConstraintException;
 
 import java.sql.*;

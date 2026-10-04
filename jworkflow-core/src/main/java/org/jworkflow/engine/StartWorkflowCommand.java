@@ -3,7 +3,7 @@ package org.jworkflow.engine;
 
 import java.util.Map;
 import java.util.Objects;
-import org.jworkflow.model.ImmutableData;
+import org.jworkflow.internal.model.ImmutableData;
 
 /**
  * Requests a new instance of a registered workflow, with its business identity and initial variables. A null

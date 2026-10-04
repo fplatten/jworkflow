@@ -1,4 +1,5 @@
 package org.jworkflow.persistence;
+import org.jworkflow.internal.persistence.WorkflowInstanceRepository;
 
 import org.jworkflow.model.WorkflowInstanceId;
 import org.jworkflow.model.WorkflowSnapshot;

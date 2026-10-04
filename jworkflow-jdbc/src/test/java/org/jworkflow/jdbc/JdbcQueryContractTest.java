@@ -1,7 +1,11 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.model.WorkflowTimerStatus;
+import org.jworkflow.internal.model.WorkflowTimer;
+import org.jworkflow.internal.events.EventSubscription;
+import org.jworkflow.internal.query.WorkflowProjectionPublisher;
+import org.jworkflow.internal.query.PersistenceWorkflowQueryService;
 
 import org.jworkflow.events.*;
-import org.jworkflow.engine.WorkflowEngine;
 import org.jworkflow.model.*;
 import org.jworkflow.outbox.*;
 import org.jworkflow.query.*;

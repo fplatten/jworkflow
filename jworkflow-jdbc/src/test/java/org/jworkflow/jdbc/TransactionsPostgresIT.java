@@ -1,4 +1,9 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.events.EventStatusValue;
+import org.jworkflow.internal.events.EventStatusScope;
+import org.jworkflow.internal.events.EventStatusAttempt;
+import org.jworkflow.internal.inbox.InboxProcessingService;
+import org.jworkflow.internal.persistence.CommandResultRecord;
 
 import org.jworkflow.engine.*;
 import org.jworkflow.events.*;
@@ -238,8 +243,8 @@ class TransactionsPostgresIT {
             List<Throwable> callbackFailures=new ArrayList<>();tx.setCompletionFailureHandler(callbackFailures::add);
             var message=StorageValueContract.outbox(EventMessage.empty(),Instant.now());ports.outbox().enqueue(message);
             var claimed=tx.inWriteTransaction(()->ports.outbox().claimEligible(Instant.now(),"owner",Instant.now().plusSeconds(60),1)).get(0);
-            var publisher=new org.jworkflow.outbox.OutboxPublisherService(ports.outbox(),ports.eventStatuses(),tx,
-                    sent->publications.incrementAndGet(),new org.jworkflow.application.RetryBackoffPolicy(){
+            var publisher=new org.jworkflow.internal.outbox.OutboxPublisherService(ports.outbox(),ports.eventStatuses(),tx,
+                    sent->publications.incrementAndGet(),new org.jworkflow.internal.application.RetryBackoffPolicy(){
                         public boolean exhausted(int attempt){return attempt>=3;}
                         public Instant nextAttemptAt(int attempt,Instant now){return now.plusSeconds(1);}
                     },Clock.systemUTC(),

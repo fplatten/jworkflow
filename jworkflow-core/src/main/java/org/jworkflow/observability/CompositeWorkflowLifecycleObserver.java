@@ -1,4 +1,6 @@
 package org.jworkflow.observability;
+import org.jworkflow.internal.observability.NoOpWorkflowLifecycleObserver;
+import org.jworkflow.internal.observability.SafeWorkflowLifecycleObserver;
 
 import java.util.Arrays;
 import java.util.List;

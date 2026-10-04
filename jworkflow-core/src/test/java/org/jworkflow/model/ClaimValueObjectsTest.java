@@ -1,7 +1,7 @@
 package org.jworkflow.model;
 
-import org.jworkflow.inbox.InboxClaim;
-import org.jworkflow.outbox.OutboxClaim;
+import org.jworkflow.internal.inbox.InboxClaim;
+import org.jworkflow.internal.outbox.OutboxClaim;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

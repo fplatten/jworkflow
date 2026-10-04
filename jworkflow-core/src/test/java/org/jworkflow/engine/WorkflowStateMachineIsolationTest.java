@@ -1,8 +1,10 @@
 package org.jworkflow.engine;
+import org.jworkflow.internal.engine.WorkflowTransitionResult;
+import org.jworkflow.internal.engine.WorkflowStateMachine;
 
 import org.jworkflow.definition.WorkflowDefinitionBuilder;
 import org.jworkflow.model.BranchConditionEvaluator;
-import org.jworkflow.model.WorkflowDefinitionRegistry;
+import org.jworkflow.internal.model.WorkflowDefinitionRegistry;
 import org.jworkflow.model.WorkflowSignal;
 import org.jworkflow.model.WorkflowSnapshot;
 import org.jworkflow.model.WorkflowStatus;

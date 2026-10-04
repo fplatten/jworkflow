@@ -24,10 +24,12 @@ public final class IsolatedConsumer {
                 try {
                     WorkflowEngine.builder().type(type).jdbcUrl("jdbc:secret:password=secret").build();
                     throw new AssertionError("Missing driver should fail");
-                } catch (ClassNotFoundException expected) {
+                } catch (IllegalStateException expected) {
                     if (!expected.getMessage().contains(type == WorkflowEngine.Type.POSTGRESQL ?
                             "org.postgresql:postgresql" : "org.xerial:sqlite-jdbc")) throw expected;
-                    if (expected.toString().contains("secret")) throw new AssertionError("Secret in diagnostics");
+                    for (Throwable t = expected; t != null; t = t.getCause()) {
+                        if (t.toString().contains("secret")) throw new AssertionError("Secret in diagnostics");
+                    }
                 }
             }
         } else {

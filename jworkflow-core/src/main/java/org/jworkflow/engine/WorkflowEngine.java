@@ -1,4 +1,6 @@
 package org.jworkflow.engine;
+import org.jworkflow.internal.engine.WorkflowEngines;
+import org.jworkflow.internal.engine.WorkflowExecutionContext;
 
 import org.jworkflow.events.*;
 import org.jworkflow.model.*;
@@ -46,9 +48,9 @@ public interface WorkflowEngine extends EventPublisher, org.jworkflow.routing.Wo
      * Builds an engine from backend/connection properties using the reflective JDBC adapter when selected.
      * @param properties engine configuration to apply
      * @return the configured engine; the caller must close it
-     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     * @throws IllegalStateException under the same conditions as {@link WorkflowEngineBuilder#build()}
      */
-    static WorkflowEngine create(WorkflowEngineProperties properties) throws ClassNotFoundException {
+    static WorkflowEngine create(WorkflowEngineProperties properties) {
         return builder().properties(properties).build();
     }
 
@@ -66,6 +68,16 @@ public interface WorkflowEngine extends EventPublisher, org.jworkflow.routing.Wo
      */
     static void setInstance(WorkflowEngine engine) {
         WorkflowEngines.setInstance(engine);
+    }
+
+    /**
+     * Installs the process-wide engine reference even if one is already installed, without closing the previous
+     * engine.
+     * @param engine engine whose lifetime remains the caller's responsibility
+     * @return the previously installed engine, or null if none was installed
+     */
+    static WorkflowEngine replaceInstance(WorkflowEngine engine) {
+        return WorkflowEngines.replaceInstance(engine);
     }
 
     /**

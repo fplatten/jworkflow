@@ -1,7 +1,7 @@
 package org.jworkflow.engine;
 
 import org.jworkflow.events.EventName;
-import org.jworkflow.events.InMemoryEventBus;
+import org.jworkflow.internal.events.InMemoryEventBus;
 import org.jworkflow.events.WorkflowEvent;
 import org.jworkflow.model.ForkDefinition;
 import org.jworkflow.model.JoinDefinition;

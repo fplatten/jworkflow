@@ -1,4 +1,6 @@
 package org.jworkflow.jdbc;
+import org.jworkflow.internal.persistence.CommandResultRepository;
+import org.jworkflow.internal.persistence.CommandResultRecord;
 
 import org.jworkflow.engine.WorkflowInfrastructureException;
 import org.jworkflow.model.WorkflowInstanceId;

@@ -1,4 +1,5 @@
 package org.jworkflow.events;
+import org.jworkflow.internal.events.WorkflowEventPublisher;
 
 import java.util.Objects;
 

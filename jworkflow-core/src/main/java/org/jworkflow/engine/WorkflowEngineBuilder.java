@@ -1,10 +1,18 @@
 package org.jworkflow.engine;
+import org.jworkflow.internal.model.DefinitionValidator;
+import org.jworkflow.internal.model.WorkflowDefinitionRegistry;
+import org.jworkflow.internal.observability.WorkflowEventLifecycleAdapter;
+import org.jworkflow.internal.observability.NoOpWorkflowLifecycleObserver;
+import org.jworkflow.internal.observability.SafeWorkflowLifecycleObserver;
+import org.jworkflow.internal.events.NoOpEventPublisher;
+import org.jworkflow.internal.definition.WorkflowDefinitionActivationService;
+import org.jworkflow.internal.persistence.WorkflowPersistence;
+import org.jworkflow.internal.engine.InMemoryWorkflowEngine;
 
 import org.jworkflow.definition.*;
 import org.jworkflow.dsl.*;
 import org.jworkflow.events.*;
 import org.jworkflow.model.*;
-import org.jworkflow.persistence.*;
 import org.jworkflow.observability.*;
 import org.jworkflow.security.*;
 
@@ -411,7 +419,7 @@ public final class WorkflowEngineBuilder {
      * @return this builder for further configuration
      * @throws NullPointerException if persistence is null
      */
-    public WorkflowEngineBuilder persistence(WorkflowPersistence persistence) {
+    WorkflowEngineBuilder persistence(WorkflowPersistence persistence) {
         this.persistence = Objects.requireNonNull(persistence, "persistence");
         return this;
     }
@@ -572,9 +580,10 @@ public final class WorkflowEngineBuilder {
      * Validates definitions/configuration and constructs the selected engine. JDBC construction borrows a
      * connection even when initialization is disabled; close the returned engine when finished.
      * @return the configured engine; the caller must close it
-     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     * @throws IllegalStateException if the configuration is invalid, or a SQLITE/POSTGRESQL engine is requested
+     *     without jworkflow-jdbc or the matching JDBC driver on the classpath
      */
-    public WorkflowEngine build() throws ClassNotFoundException {
+    public WorkflowEngine build() {
         validateConfiguration();
         DefinitionValidator validator = new DefinitionValidator();
         for (WorkflowDefinition definition : definitions.snapshot().values()) {
@@ -645,9 +654,9 @@ public final class WorkflowEngineBuilder {
      * Builds an engine and installs it as the process-wide default. The caller retains responsibility for closing
      * it.
      * @return the configured engine; the caller must close it
-     * @throws ClassNotFoundException if a required optional implementation or driver is unavailable
+     * @throws IllegalStateException under the same conditions as {@link #build()}
      */
-    public WorkflowEngine buildAndSetInstance() throws ClassNotFoundException {
+    public WorkflowEngine buildAndSetInstance() {
         WorkflowEngine engine = build();
         WorkflowEngine.setInstance(engine);
         return engine;
@@ -665,10 +674,16 @@ public final class WorkflowEngineBuilder {
             WorkflowLifecycleObserver lifecycleObserver,
             Clock clock,
             EventCapturePolicy eventCapturePolicy
-    ) throws ClassNotFoundException {
-        Class<?> engineClass = Class.forName("org.jworkflow.jdbc.JdbcWorkflowEngine");
+    ) {
+        Class<?> engineClass;
         try {
-            Object engine = engineClass.getMethod(
+            engineClass = Class.forName("org.jworkflow.jdbc.JdbcWorkflowEngine");
+        } catch (ClassNotFoundException missing) {
+            throw new IllegalStateException(properties.type() + " engines require org.jworkflow:jworkflow-jdbc on the classpath", missing);
+        }
+        try {
+            // The factory is package-private in jworkflow-jdbc: it is not supported API, only this bridge calls it.
+            java.lang.reflect.Method factory = engineClass.getDeclaredMethod(
                             "create",
                             WorkflowEngine.Type.class,
                             String.class,
@@ -686,8 +701,9 @@ public final class WorkflowEngineBuilder {
                             Map.class,
                             WorkflowLifecycleObserver.class,
                             Clock.class,
-                            EventCapturePolicy.class)
-                    .invoke(
+                            EventCapturePolicy.class);
+            factory.setAccessible(true);
+            Object engine = factory.invoke(
                             null,
                             properties.type(),
                             properties.jdbcUrl(),
@@ -708,11 +724,11 @@ public final class WorkflowEngineBuilder {
                             eventCapturePolicy);
             return (WorkflowEngine) engine;
         } catch (NoSuchMethodException | IllegalAccessException exception) {
-            throw new IllegalStateException("jworkflow-jdbc is present but does not expose JdbcWorkflowEngine.create", exception);
+            throw new IllegalStateException("jworkflow-jdbc is present but its engine factory is not compatible with this jworkflow-core version", exception);
         } catch (InvocationTargetException exception) {
             Throwable cause = exception.getCause();
-            if (cause instanceof ClassNotFoundException classNotFoundException) {
-                throw classNotFoundException;
+            if (cause instanceof ClassNotFoundException missingDriver) {
+                throw new IllegalStateException(missingDriver.getMessage(), missingDriver);
             }
             if (cause instanceof RuntimeException runtimeException) {
                 throw runtimeException;
