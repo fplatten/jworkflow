@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jworkflow.org/workbench/workflow-document-v1.schema.json",
+  "title": "JWorkflow Workbench document",
+  "type": "object",
+  "required": ["schemaVersion", "documentId", "revision", "workbenchVersion", "coreProfile", "name", "engineId", "version", "javaPackage", "outputDirectory", "blockly"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "documentId": {"type": "string", "format": "uuid"},
+    "revision": {"type": "integer", "minimum": 1},
+    "workbenchVersion": {"type": "string"},
+    "coreProfile": {"const": "0.1.0-SNAPSHOT"},
+    "name": {"type": "string"},
+    "engineId": {"type": "string"},
+    "version": {"type": "string"},
+    "javaPackage": {"type": "string"},
+    "outputDirectory": {"type": "string"},
+    "blockly": {"type": "object"}
+  },
+  "additionalProperties": true
+}

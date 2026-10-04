@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jworkflow.org/workbench/source-change-proposal-v1.schema.json",
+  "title": "JWorkflow Workbench whole-change-set proposal",
+  "description": "Returned by POST /api/project/changes and GET /api/project/changes/revert. Approval sends back the token; the server recomputes the proposal and rejects any difference.",
+  "type": "object",
+  "required": ["token", "revision", "documentHash", "discoveryRevision", "profile", "javaPackage", "groovyPath", "manualGroovyEdit", "files", "artifacts", "discrepancies"],
+  "properties": {
+    "token": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 over operation, revision, document hash, package, discovery, profile, manual-edit flag and every path with before/after hashes."},
+    "revision": {"type": "integer", "minimum": 0, "description": "Saved workflow revision the proposal was generated from; 0 for a revert."},
+    "documentHash": {"type": "string"},
+    "discoveryRevision": {"type": "string"},
+    "profile": {"type": ["object", "null"], "required": ["buildSystem", "javaTarget", "coreVersion"]},
+    "javaPackage": {"type": "string"},
+    "groovyPath": {"type": "string"},
+    "manualGroovyEdit": {"type": "boolean", "description": "The Groovy file differs from what Workbench last wrote; applying needs explicit replacement confirmation."},
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "change", "beforeHash", "afterHash", "diff"],
+        "properties": {
+          "path": {"type": "string", "description": "Path relative to the confirmed project root."},
+          "change": {"enum": ["create", "update", "delete"]},
+          "beforeHash": {"type": "string", "description": "SHA-256 of current UTF-8 content, empty when absent."},
+          "afterHash": {"type": "string", "description": "SHA-256 of proposed UTF-8 content, empty when deleted."},
+          "diff": {"type": "string", "description": "Complete unified diff; changed lines are never omitted."}
+        },
+        "additionalProperties": false
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "action", "className", "path", "status", "mapping", "note"],
+        "properties": {
+          "kind": {"enum": ["workflow", "command", "listener"]},
+          "action": {"type": "string"}, "className": {"type": "string"}, "path": {"type": "string"},
+          "status": {"enum": ["create", "update", "unchanged", "kept", "not generated"]},
+          "mapping": {"type": "array", "items": {"type": "string"}}, "note": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "discrepancies": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

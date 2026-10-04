@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jworkflow.org/workbench/discovery-bindings-v1.schema.json",
+  "title": "JWorkflow source discovery bindings",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["role", "packageName", "name", "fields", "source", "line", "proposal"],
+    "properties": {
+      "role": {"enum": ["listener", "event", "command"]},
+      "packageName": {"type": "string"}, "name": {"type": "string"},
+      "fields": {"type": "array", "items": {"type": "object", "required": ["type", "name"]}},
+      "source": {"type": "string"}, "line": {"type": "integer", "minimum": 1}, "proposal": {"type": "string"}
+    },
+    "additionalProperties": false
+  }
+}

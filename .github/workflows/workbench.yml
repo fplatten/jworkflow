@@ -1,0 +1,95 @@
+name: Standalone Workbench
+on:
+  push:
+    paths: ['jworkflow-workbench/**', 'jworkflow-core/**', 'pom.xml', '.github/workflows/workbench.yml']
+  pull_request:
+    paths: ['jworkflow-workbench/**', 'jworkflow-core/**', 'pom.xml', '.github/workflows/workbench.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  workbench:
+    # Supported platforms are Windows and macOS; the product is a runnable JAR on JDK 21+.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
+        with:
+          distribution: temurin
+          java-version: '21.0.7+6.0.LTS'
+          cache: maven
+      - name: Provision core from this revision
+        shell: pwsh
+        run: |
+          git rev-parse HEAD
+          mvn -B -ntp -pl jworkflow-core -am install -DskipTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash (Join-Path $HOME '.m2/repository/org/jworkflow/jworkflow-core/0.1.0-SNAPSHOT/jworkflow-core-0.1.0-SNAPSHOT.jar') -Algorithm SHA256
+      - name: Prepare frontend and verify standalone application
+        working-directory: jworkflow-workbench
+        shell: pwsh
+        run: |
+          function Invoke-Mvnw { if ($IsWindows) { ./mvnw.cmd @args } else { sh ./mvnw @args }; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+          node --version
+          npm ci --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm rebuild node-pty
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run vendor
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # WB-25: line and branch coverage >= 80% are enforced on Windows, where the measured suite runs. macOS executes
+          # different platform-specific code, so it builds and reports without the gate; verify-gates.ps1 proves each gate rejects a shortfall.
+          if ($IsWindows) { Invoke-Mvnw -B -ntp verify dependency:tree '-DoutputFile=target/dependencies.txt' }
+          else { Invoke-Mvnw -B -ntp package jacoco:report dependency:tree '-DoutputFile=target/dependencies.txt' }
+          $tree = Get-Content target/dependencies.txt -Raw
+          if ($tree -match 'jworkflow-jdbc' -or $tree -notmatch 'org.jworkflow:jworkflow-core:jar:0.1.0-SNAPSHOT') { throw 'Core dependency boundary failed' }
+          ./scripts/verify-gates.ps1
+      - name: Browser tests on installed Chrome and Edge (M1 terminal, M2 project journey)
+        working-directory: jworkflow-workbench
+        shell: pwsh
+        run: |
+          foreach ($channel in @('chrome', 'msedge')) {
+            $env:WORKBENCH_BROWSER=$channel
+            if ($IsWindows) { ./mvnw.cmd -o -B -ntp '-Dtest=BrowserSmokeIT,M2BrowserSmokeIT' test } else { sh ./mvnw -o -B -ntp '-Dtest=BrowserSmokeIT,M2BrowserSmokeIT' test }
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: M3–M6 journeys, keyboard-only accessibility and 500-block performance on Chrome and Edge
+        working-directory: jworkflow-workbench
+        shell: pwsh
+        run: |
+          if ($IsWindows) { ./mvnw.cmd -o -B -ntp '-Dtest=M3BrowserSmokeIT,M4BrowserSmokeIT,M5BrowserSmokeIT,M6BrowserSmokeIT,AccessibilityBrowserIT,PerformanceBrowserIT' test } else { sh ./mvnw -o -B -ntp '-Dtest=M3BrowserSmokeIT,M4BrowserSmokeIT,M5BrowserSmokeIT,M6BrowserSmokeIT,AccessibilityBrowserIT,PerformanceBrowserIT' test }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Release JAR (clean build with sentinel key, contents check, key scan, checksum)
+        working-directory: jworkflow-workbench
+        shell: pwsh
+        run: |
+          node scripts/release.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Launch the packaged JAR with java -jar (terminal, M4 journey, runtime key sentinel, startup)
+        working-directory: jworkflow-workbench
+        shell: pwsh
+        run: |
+          node scripts/jar-smoke.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve evidence and JAR
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: workbench-${{ matrix.os }}
+          path: |
+            jworkflow-workbench/target/release/**
+            jworkflow-workbench/target/performance-*.txt
+            jworkflow-workbench/target/surefire-reports/**
+            jworkflow-workbench/target/site/jacoco/**
+            jworkflow-workbench/target/dependencies.txt
+            jworkflow-workbench/target/browser-*.png
+            jworkflow-workbench/target/browser-smoke-*.log
+          if-no-files-found: error
